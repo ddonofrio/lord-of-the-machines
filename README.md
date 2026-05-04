@@ -66,6 +66,18 @@ Environment variable override:
 LORD_OF_THE_MACHINES_BASE_AGENT_CONFIG
 ```
 
+Mission list file (runner bootstrap) default:
+
+```text
+config/missions.json
+```
+
+Mission file override:
+
+```text
+LORD_OF_THE_MACHINES_MISSIONS_FILE
+```
+
 Default model:
 
 ```text
@@ -320,6 +332,7 @@ Main components:
   - role charter prompt,
   - role-specific DNA rulesets.
 - `MissionRunner`: loop controller to create missions, seed events, and execute runtime cycles until idle.
+- `MissionRunner`: loop controller to load missions from JSON, create them in the registry, seed events, and execute runtime cycles until idle.
 - `SoftwareDeveloperRoleExecutor`: implementation executor with:
   - `software_development_environment` tool installed on the role agent,
   - scoped write-prefix guardrails,
@@ -329,14 +342,36 @@ Prompt composition is intentionally sourced from versioned runtime code modules,
 
 This is an MVP foundation for the CoT-like event loop: it standardizes role execution contracts and phase transitions while still allowing flexible role-specific prompting.
 
-### First MVP Mission Suggestion
+### Missions Source
 
-`MissionRunner` includes constants for a first self-evolution mission:
+The default mission source is a JSON file:
 
-- `DEFAULT_SELF_EVOLUTION_MISSION_TITLE`
-- `DEFAULT_SELF_EVOLUTION_MISSION_DESCRIPTION`
+```text
+config/missions.json
+```
 
-Use it to run a small internal refactor mission as the first autonomous execution path.
+Supported shape:
+
+```json
+{
+  "missions": [
+    {
+      "mission_id": "my_mission_id",
+      "title": "Mission Title",
+      "description": "Mission objective",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+`MissionRunner` loads this list and creates any missing missions before entering execution cycles.
+
+The first seeded mission in `config/missions.json` asks the system to:
+
+- create a technical architecture document for the project,
+- and add a link to that document in `README.md`,
+- so new agents can quickly understand the architecture baseline.
 
 ## Running Tests
 

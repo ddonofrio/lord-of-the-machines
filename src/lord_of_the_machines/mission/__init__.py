@@ -20,8 +20,9 @@ from lord_of_the_machines.mission.meeting_tool_agent import (
 from lord_of_the_machines.mission.runtime import MissionRuntime, MissionRuntimeConfig
 from lord_of_the_machines.mission.prompting import RolePromptProfile, compose_system_prompt, default_role_profile
 from lord_of_the_machines.mission.runner import (
-    DEFAULT_SELF_EVOLUTION_MISSION_DESCRIPTION,
-    DEFAULT_SELF_EVOLUTION_MISSION_TITLE,
+    DEFAULT_MISSIONS_FILE_PATH,
+    MISSIONS_FILE_ENV_VAR,
+    MissionSeed,
     MissionRunner,
     MissionRunnerConfig,
 )
@@ -47,8 +48,9 @@ __all__ = [
     "MissionRuntimeConfig",
     "MissionRunner",
     "MissionRunnerConfig",
-    "DEFAULT_SELF_EVOLUTION_MISSION_TITLE",
-    "DEFAULT_SELF_EVOLUTION_MISSION_DESCRIPTION",
+    "MissionSeed",
+    "DEFAULT_MISSIONS_FILE_PATH",
+    "MISSIONS_FILE_ENV_VAR",
     "RoleTaskRequest",
     "RoleTaskResult",
 ]

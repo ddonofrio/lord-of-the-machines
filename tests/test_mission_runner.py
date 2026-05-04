@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,7 +66,7 @@ class MissionRunnerTests(unittest.TestCase):
         runner = MissionRunner(
             mission_registry=self.mission_registry,
             runtime=runtime,
-            config=MissionRunnerConfig(max_cycles=5, idle_cycles_to_stop=1),
+            config=MissionRunnerConfig(max_cycles=5, idle_cycles_to_stop=1, bootstrap_missions_from_file=False),
         )
         runner.create_mission(
             mission_id="m_runner_1",
@@ -92,7 +93,7 @@ class MissionRunnerTests(unittest.TestCase):
         runner = MissionRunner(
             mission_registry=self.mission_registry,
             runtime=runtime,
-            config=MissionRunnerConfig(max_cycles=8, idle_cycles_to_stop=2),
+            config=MissionRunnerConfig(max_cycles=8, idle_cycles_to_stop=2, bootstrap_missions_from_file=False),
         )
         runner.create_mission(
             mission_id="m_runner_2",
@@ -107,6 +108,54 @@ class MissionRunnerTests(unittest.TestCase):
         phase_status = final["m_runner_2"]["phase_status"]
         self.assertEqual(phase_status["product_direction"], "completed")
         self.assertEqual(phase_status["implementation"], "completed")
+
+    def test_runner_loads_mission_list_from_json_file(self) -> None:
+        mission_file = self._write_missions_file(
+            {
+                "missions": [
+                    {
+                        "mission_id": "m_from_json_1",
+                        "title": "From JSON 1",
+                        "description": "Seeded from mission file",
+                    },
+                    {
+                        "mission_id": "m_from_json_2",
+                        "title": "From JSON 2",
+                        "description": "Second seeded mission",
+                    },
+                ]
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={},
+            config=MissionRuntimeConfig(max_events_per_run=1),
+        )
+        runner = MissionRunner(
+            mission_registry=self.mission_registry,
+            runtime=runtime,
+            config=MissionRunnerConfig(
+                max_cycles=1,
+                seed_each_cycle=False,
+                bootstrap_missions_from_file=False,
+            ),
+        )
+
+        result = runner.create_missions_from_file(mission_file)
+
+        self.assertEqual(result["loaded"], 2)
+        self.assertEqual(len(result["created"]), 2)
+        missions = self.mission_registry.handlers()["list_missions"]({})
+        mission_ids = {mission["mission_id"] for mission in missions["missions"]}
+        self.assertIn("m_from_json_1", mission_ids)
+        self.assertIn("m_from_json_2", mission_ids)
+
+    def _write_missions_file(self, payload: dict[str, object]) -> Path:
+        path = self.artifact_registry.config.root_path.parent / "missions.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
 
 
 if __name__ == "__main__":
