@@ -382,6 +382,23 @@ $env:PYTHONPATH = "src"
 python -m unittest discover -s tests
 ```
 
+## Launch Missions
+
+Bootstrap missions from `config/missions.json` without running role agents:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m lord_of_the_machines.mission --bootstrap-only --json
+```
+
+Run the mission loop:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:OPENAI_API_KEY = "<your_key>"
+python -m lord_of_the_machines.mission --json
+```
+
 ## Next Work
 
 The autonomous layer still needs to be built:
