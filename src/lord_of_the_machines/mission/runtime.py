@@ -198,6 +198,19 @@ class MissionRuntime:
 
         raw_result = executor.execute_task(request)
         result = raw_result if isinstance(raw_result, RoleTaskResult) else RoleTaskResult.from_mapping(raw_result)
+        log_json(
+            self._logger,
+            "mission_runtime.role_result",
+            {
+                "mission_id": mission_id,
+                "phase": phase,
+                "role": role,
+                "round": int(payload.get("round") or 1),
+                "status": result.status,
+                "summary": result.summary,
+                "has_artifact_content": bool(result.artifact_content),
+            },
+        )
         return self._apply_role_result(
             mission_id=mission_id,
             phase=phase,
@@ -240,6 +253,18 @@ class MissionRuntime:
                 result=result,
             )
             self._update_mission_lifecycle_on_completion(mission_id)
+            log_json(
+                self._logger,
+                "mission_runtime.phase_completed",
+                {
+                    "mission_id": mission_id,
+                    "phase": phase,
+                    "role": role,
+                    "summary": result.summary,
+                    "has_artifact": artifact is not None,
+                    "next_phase_scheduled": next_phase_event is not None,
+                },
+            )
             return {"status": result.status, "artifact": artifact, "next_phase_event": next_phase_event}
 
         if result.status == STATUS_NEEDS_FOLLOW_UP:
@@ -264,6 +289,17 @@ class MissionRuntime:
                     phase=phase,
                     role=role,
                     summary="Follow-up round limit reached.",
+                )
+                log_json(
+                    self._logger,
+                    "mission_runtime.phase_blocked.follow_up_limit",
+                    {
+                        "mission_id": mission_id,
+                        "phase": phase,
+                        "role": role,
+                        "round": round_number,
+                        "summary": result.summary,
+                    },
                 )
                 return {
                     "status": STATUS_BLOCKED,
@@ -297,6 +333,17 @@ class MissionRuntime:
                     "payload": follow_up_payload,
                 }
             )
+            log_json(
+                self._logger,
+                "mission_runtime.phase_follow_up_scheduled",
+                {
+                    "mission_id": mission_id,
+                    "phase": phase,
+                    "role": role,
+                    "next_round": round_number + 1,
+                    "summary": result.summary,
+                },
+            )
             return {
                 "status": STATUS_NEEDS_FOLLOW_UP,
                 "round": round_number + 1,
@@ -323,6 +370,17 @@ class MissionRuntime:
             phase=phase,
             role=role,
             summary=result.summary or f"Phase returned status '{result.status}'.",
+        )
+        log_json(
+            self._logger,
+            "mission_runtime.phase_failed",
+            {
+                "mission_id": mission_id,
+                "phase": phase,
+                "role": role,
+                "status": result.status,
+                "summary": result.summary,
+            },
         )
         return {"status": result.status, "summary": result.summary}
 

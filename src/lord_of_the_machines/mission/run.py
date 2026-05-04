@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -146,6 +147,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ],
     )
     parser.add_argument("--bootstrap-only", action="store_true")
+    parser.add_argument("--reset-state", action="store_true")
+    parser.add_argument("--require-all-completed", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--no-log", action="store_true")
     parser.add_argument("--log-dir", type=Path, default=None)
@@ -155,7 +158,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo_root = args.repo_root.resolve()
     state_dir = (args.state_dir or (repo_root / ".state")).resolve()
     missions_file = (args.missions_file or (repo_root / "config" / "missions.json")).resolve()
+    if args.reset_state and state_dir.exists():
+        shutil.rmtree(state_dir)
     log_path: str | None = None
+    exit_code = 0
     try:
         if not args.no_log:
             resolved_log_dir = (args.log_dir or (repo_root / "logs")).resolve()
@@ -194,9 +200,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"See logs: {log_path}", file=sys.stderr)
             return 1
 
+        incomplete_missions: list[dict[str, str]] = []
+        if args.require_all_completed and not args.bootstrap_only and isinstance(result, dict):
+            for mission in result.get("final_missions", []):
+                status = str(mission.get("status") or "")
+                if status != "completed":
+                    incomplete_missions.append(
+                        {
+                            "mission_id": str(mission.get("mission_id") or ""),
+                            "status": status or "unknown",
+                        }
+                    )
+            if incomplete_missions:
+                exit_code = 3
+
         if log_path and isinstance(result, dict):
             result = dict(result)
             result["log_path"] = log_path
+            if incomplete_missions:
+                result["incomplete_missions"] = incomplete_missions
 
         if args.json:
             print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -214,9 +236,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"status={mission.get('status')} | "
                         f"phases={mission.get('phase_status')}"
                     )
+                if incomplete_missions:
+                    print("Mission run finished with incomplete missions:")
+                    for mission in incomplete_missions:
+                        print(f"- {mission['mission_id']} ({mission['status']})")
             if log_path:
                 print(f"Logs: {log_path}")
-        return 0
+        return exit_code
     finally:
         if not args.no_log:
             close_run_logging()

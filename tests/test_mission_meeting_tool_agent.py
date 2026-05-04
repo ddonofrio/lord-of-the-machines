@@ -4,7 +4,7 @@ import json
 import unittest
 
 from lord_of_the_machines.llm import BaseAgent
-from lord_of_the_machines.mission import MeetingRoleExecutor, MeetingToolAgent, RoleTaskRequest
+from lord_of_the_machines.mission import MeetingRequest, MeetingRoleExecutor, MeetingToolAgent, RoleTaskRequest
 from tests.helpers.fake_openai import FakeClient
 from tests.helpers.outputs import reply_output, tool_output
 
@@ -13,9 +13,11 @@ class MeetingToolAgentTests(unittest.TestCase):
     def test_execute_meeting_returns_structured_result(self) -> None:
         organizer_client = FakeClient(
             [
-                reply_output(
-                    json.dumps(
-                        {
+                tool_output(
+                    {
+                        "tool": "_meeting_result",
+                        "method": "submit",
+                        "arguments": {
                             "status": "completed",
                             "meeting_summary": "Consensus reached after two rounds.",
                             "decisions": ["Split scope in two milestones"],
@@ -23,8 +25,8 @@ class MeetingToolAgentTests(unittest.TestCase):
                             "unresolved_questions": ["Retention baseline source"],
                             "follow_ups": ["PM to update PRD"],
                             "final_recommendation": "Proceed with milestone 1 first.",
-                        }
-                    )
+                        },
+                    }
                 )
             ]
         )
@@ -47,13 +49,15 @@ class MeetingToolAgentTests(unittest.TestCase):
     def test_meeting_tool_can_be_installed_on_host_agent(self) -> None:
         organizer_client = FakeClient(
             [
-                reply_output(
-                    json.dumps(
-                        {
+                tool_output(
+                    {
+                        "tool": "_meeting_result",
+                        "method": "submit",
+                        "arguments": {
                             "status": "completed",
                             "meeting_summary": "Done",
-                        }
-                    )
+                        },
+                    }
                 )
             ]
         )
@@ -91,14 +95,16 @@ class MeetingToolAgentTests(unittest.TestCase):
     def test_meeting_role_executor_adapts_to_role_task_shape(self) -> None:
         organizer_client = FakeClient(
             [
-                reply_output(
-                    json.dumps(
-                        {
+                tool_output(
+                    {
+                        "tool": "_meeting_result",
+                        "method": "submit",
+                        "arguments": {
                             "status": "completed",
                             "meeting_summary": "All aligned",
                             "decisions": ["Start implementation"],
-                        }
-                    )
+                        },
+                    }
                 )
             ]
         )
@@ -122,6 +128,20 @@ class MeetingToolAgentTests(unittest.TestCase):
         self.assertEqual(role_result.status, "completed")
         self.assertEqual(role_result.artifact_type, "meeting_summary")
         self.assertIn("Meeting Summary", role_result.artifact_content or "")
+
+    def test_meeting_returns_follow_up_when_structured_result_is_missing(self) -> None:
+        organizer_client = FakeClient([reply_output("Meeting done.")])
+        meeting_tool = MeetingToolAgent(BaseAgent.new(client=organizer_client, rate_limiter=None))
+
+        result = meeting_tool.execute_meeting(
+            request=MeetingRequest(
+                objective="Validate proposal",
+                presenter="product_director",
+            )
+        )
+
+        self.assertEqual(result.status, "needs_follow_up")
+        self.assertIn("did not submit a structured meeting result", result.meeting_summary)
 
 
 if __name__ == "__main__":

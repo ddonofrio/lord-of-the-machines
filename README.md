@@ -396,7 +396,13 @@ Run the mission loop:
 ```powershell
 $env:PYTHONPATH = "src"
 $env:OPENAI_API_KEY = "<your_key>"
-python -m lord_of_the_machines.mission --json
+python -m lord_of_the_machines.mission --json --reset-state
+```
+
+Windows quick run:
+
+```cmd
+scripts\run-mission.cmd
 ```
 
 By default each run writes logs to:
@@ -407,7 +413,9 @@ logs/mission-run-<timestamp>.log
 
 Useful flags:
 
+- `--reset-state`: delete `.state/` before running to start from a clean mission state.
 - `--max-follow-up-rounds <N>`: allow more rounds before a phase is blocked.
+- `--require-all-completed`: return exit code `3` if any mission finishes in a non-completed status.
 - `--log-dir <path>`: change log output directory.
 
 ## Next Work

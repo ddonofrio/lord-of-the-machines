@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +11,7 @@ from lord_of_the_machines.mission import (
     SoftwareDeveloperRoleExecutorConfig,
 )
 from tests.helpers.fake_openai import FakeClient
-from tests.helpers.outputs import reply_output, tool_output
+from tests.helpers.outputs import tool_output
 
 
 class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
@@ -52,9 +51,13 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
                             "path": "src/lord_of_the_machines/mission/new_helper.py",
                             "content": "VALUE = 1\n",
                         },
-                    }
+                    },
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {"status": "completed", "summary": "Code updated."},
+                    },
                 ),
-                reply_output(json.dumps({"status": "completed", "summary": "Code updated."})),
             ]
         )
         agent = BaseAgent.new(client=client, rate_limiter=None)
@@ -91,9 +94,13 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
                             "path": "README.md",
                             "content": "# unexpected\n",
                         },
-                    }
+                    },
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {"status": "completed", "summary": "Code updated."},
+                    },
                 ),
-                reply_output(json.dumps({"status": "completed", "summary": "Code updated."})),
             ]
         )
         agent = BaseAgent.new(client=client, rate_limiter=None)
@@ -129,9 +136,13 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
                             "path": "src/lord_of_the_machines/mission/new_helper.py",
                             "content": "VALUE = 2\n",
                         },
-                    }
+                    },
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {"status": "completed", "summary": "Code updated."},
+                    },
                 ),
-                reply_output(json.dumps({"status": "completed", "summary": "Code updated."})),
             ]
         )
         agent = BaseAgent.new(client=client, rate_limiter=None)

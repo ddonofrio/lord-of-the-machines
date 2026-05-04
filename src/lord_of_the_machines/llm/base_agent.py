@@ -293,6 +293,32 @@ class BaseAgent:
                     disabled_tools=disabled_tool_names,
                 )
 
+    def query_structured_tool_result(
+        self,
+        message: str | list[dict[str, Any]] | dict[str, Any],
+        *,
+        tool_name: str,
+        method_name: str,
+        continue_previous: bool = False,
+        **overrides: Any,
+    ) -> tuple[dict[str, Any] | None, AgentReply]:
+        reply = self.query(
+            message,
+            continue_previous=continue_previous,
+            return_after_tool_results=True,
+            return_after_tool_names={tool_name},
+            **overrides,
+        )
+        for tool_result in reversed(reply.tool_results):
+            if tool_result.tool != tool_name or tool_result.method != method_name:
+                continue
+            if not tool_result.ok:
+                return None, reply
+            if isinstance(tool_result.result, dict):
+                return copy.deepcopy(tool_result.result), reply
+            return None, reply
+        return None, reply
+
     def _send_reply(
         self,
         payload: dict[str, Any],

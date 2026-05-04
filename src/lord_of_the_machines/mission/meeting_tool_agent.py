@@ -37,6 +37,26 @@ DEFAULT_RUN_MEETING_SCHEMA = {
 }
 
 
+DEFAULT_MEETING_RESULT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": ["completed", "needs_follow_up", "blocked", "failed"],
+        },
+        "meeting_summary": {"type": "string"},
+        "decisions": {"type": "array", "items": {"type": "string"}},
+        "required_changes": {"type": "array", "items": {"type": "string"}},
+        "unresolved_questions": {"type": "array", "items": {"type": "string"}},
+        "follow_ups": {"type": "array", "items": {"type": "string"}},
+        "final_recommendation": {"type": "string"},
+        "metadata": {"type": "object"},
+    },
+    "required": ["status"],
+}
+
+
 @dataclass(slots=True)
 class MeetingToolAgentConfig:
     role_name: str = "meeting_organizer"
@@ -52,6 +72,8 @@ class MeetingToolAgentConfig:
         "Coordinate a meeting round and return a structured summary with decisions, doubts and follow-ups."
     )
     arguments_schema: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_RUN_MEETING_SCHEMA))
+    result_tool_name: str = "_meeting_result"
+    result_method_name: str = "submit"
 
 
 class MeetingToolAgent:
@@ -64,6 +86,7 @@ class MeetingToolAgent:
         self.organizer_agent = organizer_agent
         self.config = config or MeetingToolAgentConfig()
         self.organizer_agent.set_system_prompt(self._build_system_prompt())
+        self.organizer_agent.add_tool(self._result_definition(), handlers=self._result_handlers())
 
     def install(self, host_agent: BaseAgent) -> None:
         host_agent.add_tool(self.definition(), handlers=self.handlers())
@@ -86,8 +109,34 @@ class MeetingToolAgent:
 
     def execute_meeting(self, request: MeetingRequest) -> MeetingResult:
         prompt = self._build_prompt(request)
-        reply = self.organizer_agent.query(prompt)
-        return self._parse_meeting_result(reply.message)
+        raw_result, reply = self.organizer_agent.query_structured_tool_result(
+            prompt,
+            tool_name=self.config.result_tool_name,
+            method_name=self.config.result_method_name,
+        )
+        if raw_result is not None:
+            try:
+                return MeetingResult.from_mapping(raw_result)
+            except ValueError as exc:
+                return MeetingResult(
+                    status="needs_follow_up",
+                    meeting_summary=f"Invalid structured meeting result: {exc}",
+                    metadata={"raw_tool_result": raw_result},
+                )
+        return MeetingResult(
+            status="needs_follow_up",
+            meeting_summary=(
+                "Meeting organizer did not submit a structured meeting result via "
+                f"{self.config.result_tool_name}.{self.config.result_method_name}."
+            ),
+            follow_ups=[
+                "Call the required structured meeting result tool with status and summary.",
+            ],
+            metadata={
+                "raw_message": reply.message,
+                "tool_calls": [call.raw for call in reply.tool_calls],
+            },
+        )
 
     def _run_meeting(self, arguments: dict[str, Any]) -> dict[str, Any]:
         request = MeetingRequest.from_mapping(arguments)
@@ -102,10 +151,34 @@ class MeetingToolAgent:
             extra_rulesets=self.config.extra_dna_rulesets,
         )
 
+    def _result_definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name=self.config.result_tool_name,
+            description="Submit the structured result for the current meeting.",
+            internal=True,
+            single_round=True,
+            methods=[
+                ToolMethodDefinition(
+                    name=self.config.result_method_name,
+                    description="Return the final structured meeting result payload.",
+                    arguments_schema=dict(DEFAULT_MEETING_RESULT_SCHEMA),
+                )
+            ],
+        )
+
+    def _result_handlers(self) -> dict[str, ToolHandler]:
+        return {self.config.result_method_name: self._capture_result}
+
+    def _capture_result(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        return dict(arguments)
+
     def _build_prompt(self, request: MeetingRequest) -> str:
         payload = request.to_mapping()
         return (
-            "Run the meeting process and return ONLY a JSON object with this schema:\n"
+            "Run the meeting process and then call this tool with your structured result:\n"
+            f"- tool: {self.config.result_tool_name}\n"
+            f"- method: {self.config.result_method_name}\n"
+            "Use this schema for arguments:\n"
             "{"
             '"status":"completed|needs_follow_up|blocked|failed",'
             '"meeting_summary":"string",'
@@ -116,25 +189,9 @@ class MeetingToolAgent:
             '"final_recommendation":"string",'
             '"metadata":{}'
             "}\n"
-            "Do not include markdown fences.\n"
+            "After calling that tool, optionally call reply.send_message with a short human summary.\n"
             f"Meeting payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
-
-    def _parse_meeting_result(self, message: str) -> MeetingResult:
-        stripped = message.strip()
-        if not stripped:
-            return MeetingResult(
-                status="needs_follow_up",
-                meeting_summary="Meeting organizer returned an empty response.",
-            )
-        try:
-            parsed = json.loads(stripped)
-        except json.JSONDecodeError:
-            return MeetingResult(
-                status="needs_follow_up",
-                meeting_summary=stripped,
-            )
-        return MeetingResult.from_mapping(parsed if isinstance(parsed, dict) else {})
 
 
 @dataclass(slots=True)
