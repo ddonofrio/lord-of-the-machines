@@ -6,10 +6,11 @@ from typing import Any
 
 from lord_of_the_machines.llm.envelope import ToolCallOutputSpec
 from lord_of_the_machines.llm.replies import AgentToolCall
+from lord_of_the_machines.llm.tool_definitions import ToolDefinition, ToolMethodDefinition
 
 
 class AgentOutputParser:
-    def __init__(self, *, output_spec: ToolCallOutputSpec, agent_tools: list[dict[str, Any]]):
+    def __init__(self, *, output_spec: ToolCallOutputSpec, agent_tools: list[ToolDefinition]):
         self.output_spec = output_spec
         self.agent_tools = agent_tools
 
@@ -79,7 +80,7 @@ class AgentOutputParser:
                     ),
                 )
 
-            schema_error = self._validate_arguments(arguments, method_definition.get("arguments_schema"), prefix)
+            schema_error = self._validate_arguments(arguments, method_definition.arguments_schema, prefix)
             if schema_error:
                 return [], schema_error
 
@@ -87,25 +88,25 @@ class AgentOutputParser:
 
         return tool_calls, None
 
-    def _method_definition(self, tool_name: str, method_name: str) -> dict[str, Any] | None:
+    def _method_definition(self, tool_name: str, method_name: str) -> ToolMethodDefinition | None:
         for tool in self.agent_tools:
-            if tool.get("name") != tool_name:
+            if tool.name != tool_name:
                 continue
-            for method in tool.get("methods", []):
-                if method.get("name") == method_name:
-                    return method
+            method = tool.method(method_name)
+            if method is not None:
+                return method
         return None
 
     def _allowed_tool_methods(self) -> dict[str, set[str]]:
         allowed: dict[str, set[str]] = {}
         for tool in self.agent_tools:
-            tool_name = tool.get("name")
+            tool_name = tool.name
             if not isinstance(tool_name, str) or not tool_name:
                 continue
             allowed[tool_name] = {
-                method["name"]
-                for method in tool.get("methods", [])
-                if isinstance(method, dict) and isinstance(method.get("name"), str) and method["name"]
+                method.name
+                for method in tool.methods
+                if isinstance(method.name, str) and method.name
             }
         return allowed
 

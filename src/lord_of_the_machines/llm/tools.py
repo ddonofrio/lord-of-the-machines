@@ -6,28 +6,31 @@ from typing import Any
 
 from lord_of_the_machines.llm.config import ReplyConfig
 from lord_of_the_machines.llm.replies import AgentToolCall, AgentToolResult
+from lord_of_the_machines.llm.tool_definitions import (
+    ToolDefinition,
+    tool_definitions_to_mappings,
+)
 
 
 ToolHandler = Callable[[dict[str, Any]], Any]
 
 
-def validate_tool_definition(tool: dict[str, Any]) -> None:
-    if not isinstance(tool, dict):
-        raise TypeError("Tool definition must be a dictionary.")
-    if not isinstance(tool.get("name"), str) or not tool["name"]:
+def validate_tool_definition(tool: ToolDefinition) -> ToolDefinition:
+    if not isinstance(tool, ToolDefinition):
+        raise TypeError("BaseAgent tools must be ToolDefinition instances.")
+    if not isinstance(tool.name, str) or not tool.name:
         raise ValueError("Tool definition requires a non-empty string name.")
-    methods = tool.get("methods")
+    methods = tool.methods
     if not isinstance(methods, list) or not methods:
         raise ValueError("Tool definition requires a non-empty methods list.")
     for method in methods:
-        if not isinstance(method, dict):
-            raise ValueError("Each tool method must be a dictionary.")
-        if not isinstance(method.get("name"), str) or not method["name"]:
+        if not isinstance(method.name, str) or not method.name:
             raise ValueError("Each tool method requires a non-empty string name.")
+    return copy.deepcopy(tool)
 
 
 def tools_for_prompt(
-    agent_tools: list[dict[str, Any]],
+    agent_tools: list[ToolDefinition],
     *,
     reply: ReplyConfig,
     disabled_tools: set[str] | None = None,
@@ -36,14 +39,15 @@ def tools_for_prompt(
     tools = [
         copy.deepcopy(tool)
         for tool in agent_tools
-        if tool.get("name") not in disabled_tools
+        if tool.name not in disabled_tools
     ]
+    tool_mappings = tool_definitions_to_mappings(tools)
     language_note = (
         f" Output language requirement: all {reply.tool}.{reply.method} "
         f"arguments.{reply.message_argument} values must be written in {reply.output_language}."
     )
 
-    for tool in tools:
+    for tool in tool_mappings:
         if tool.get("name") != reply.tool:
             continue
         tool["description"] = f"{tool.get('description', '').rstrip()}{language_note}"
@@ -58,14 +62,14 @@ def tools_for_prompt(
                     f"{message_property.get('description', '').rstrip()} "
                     f"Must be written in {reply.output_language}."
                 )
-    return tools
+    return tool_mappings
 
 
-def single_round_tool_names(agent_tools: list[dict[str, Any]], tool_calls: list[AgentToolCall]) -> set[str]:
+def single_round_tool_names(agent_tools: list[ToolDefinition], tool_calls: list[AgentToolCall]) -> set[str]:
     single_round_tools = {
-        tool.get("name")
+        tool.name
         for tool in agent_tools
-        if tool.get("single_round") is True
+        if tool.single_round is True
     }
     return {
         tool_call.tool
@@ -124,7 +128,13 @@ class ToolExecutor:
             try:
                 result = handler(copy.deepcopy(tool_call.arguments))
             except Exception as exc:  # pragma: no cover - defensive guard for user handlers.
-                tool_result = AgentToolResult(tool=tool_call.tool, method=tool_call.method, ok=False, error=str(exc))
+                tool_result = AgentToolResult(
+                    tool=tool_call.tool,
+                    method=tool_call.method,
+                    ok=False,
+                    error=str(exc),
+                    call_id=tool_call.call_id,
+                )
                 results.append(tool_result)
                 self._log_json(
                     self._logger,
@@ -133,7 +143,13 @@ class ToolExecutor:
                 )
                 continue
 
-            tool_result = AgentToolResult(tool=tool_call.tool, method=tool_call.method, ok=True, result=result)
+            tool_result = AgentToolResult(
+                tool=tool_call.tool,
+                method=tool_call.method,
+                ok=True,
+                result=result,
+                call_id=tool_call.call_id,
+            )
             results.append(tool_result)
             self._log_json(
                 self._logger,

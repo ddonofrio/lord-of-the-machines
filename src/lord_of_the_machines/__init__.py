@@ -8,7 +8,12 @@ from lord_of_the_machines.llm import (
     BaseAgentConfig,
     EnvelopeField,
     MissingApiKeyError,
+    ProviderAdapter,
+    ToolCallingConfig,
     ToolCallOutputSpec,
+    ToolDefinition,
+    ToolMethodDefinition,
+    get_provider_adapter,
 )
 
 __all__ = [
@@ -21,5 +26,10 @@ __all__ = [
     "BaseAgentConfig",
     "EnvelopeField",
     "MissingApiKeyError",
+    "ProviderAdapter",
+    "ToolDefinition",
+    "ToolCallingConfig",
     "ToolCallOutputSpec",
+    "ToolMethodDefinition",
+    "get_provider_adapter",
 ]

@@ -4,6 +4,7 @@ import copy
 from typing import Any
 
 from lord_of_the_machines.llm.envelope import ToolCallOutputSpec
+from lord_of_the_machines.llm.tool_definitions import ToolDefinition
 
 
 def normalize_strict_json_schema(schema: dict[str, Any], *, optional: bool = False) -> dict[str, Any]:
@@ -47,21 +48,21 @@ def allow_null_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_tool_call_schema(
-    agent_tools: list[dict[str, Any]],
+    agent_tools: list[ToolDefinition],
     output_spec: ToolCallOutputSpec,
     verbosity: str,
 ) -> dict[str, Any]:
     call_schemas = []
     for tool in agent_tools:
-        tool_name = tool.get("name")
+        tool_name = tool.name
         if not tool_name:
             continue
-        for method in tool.get("methods", []):
-            method_name = method.get("name")
+        for method in tool.methods:
+            method_name = method.name
             if not method_name:
                 continue
             arguments_schema = normalize_strict_json_schema(
-                method.get("arguments_schema")
+                method.arguments_schema
                 or {
                     "type": "object",
                     "additionalProperties": False,

@@ -11,7 +11,7 @@ from lord_of_the_machines.llm.replies import AgentReply, AgentToolCall, AgentToo
 
 def config_for_log(config: BaseAgentConfig) -> dict[str, Any]:
     config_mapping = asdict(config)
-    agent_tools = config_mapping.get("agent_tools") or []
+    agent_tools = config.agent_tools
     memory = config_mapping.get("memory") or []
     system_prompt = config_mapping.get("system_prompt") or ""
     protocol_instructions = config.envelope.instructions or ""
@@ -22,6 +22,7 @@ def config_for_log(config: BaseAgentConfig) -> dict[str, Any]:
         "api_key_env": config.model.api_key_env,
         "model_env": config.model.model_env,
         "envelope_enabled": config.envelope.enabled,
+        "tool_calling_mode": config.tool_calling.mode,
         "envelope_version": config.envelope.version,
         "envelope_fields": [field.name for field in config.envelope.input_fields],
         "output_fields": config.envelope.output.to_mapping(),
@@ -60,11 +61,11 @@ def config_for_log(config: BaseAgentConfig) -> dict[str, Any]:
         "protocol_instructions_preview": truncate_text(protocol_instructions, 160),
         "memory_count": len(memory),
         "memory_keys": [record.get("key") for record in memory[:5] if isinstance(record, dict) and record.get("key")],
-        "tool_names": [tool.get("name") for tool in agent_tools if isinstance(tool, dict)],
+        "tool_names": [tool.name for tool in agent_tools if tool.name],
         "tool_method_counts": {
-            str(tool.get("name")): len(tool.get("methods") or [])
+            tool.name: len(tool.methods)
             for tool in agent_tools
-            if isinstance(tool, dict) and tool.get("name")
+            if tool.name
         },
         "text_config": text_config_for_log(config.response_defaults.get("text")),
     }
@@ -76,6 +77,7 @@ def tool_call_for_log(tool_call: AgentToolCall) -> dict[str, Any]:
         "method": tool_call.method,
         "arguments": summarize_for_log(tool_call.arguments, long_text=180),
         "raw": summarize_for_log(tool_call.raw, long_text=180),
+        "call_id": tool_call.call_id,
     }
 
 
@@ -86,6 +88,7 @@ def tool_result_for_log(tool_result: AgentToolResult) -> dict[str, Any]:
         "ok": tool_result.ok,
         "result": summarize_for_log(tool_result.result, long_text=180),
         "error": truncate_text(tool_result.error, 200) if isinstance(tool_result.error, str) else tool_result.error,
+        "call_id": tool_result.call_id,
     }
 
 
@@ -146,8 +149,9 @@ def payload_for_log(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def response_for_log(response: Any) -> dict[str, Any]:
-    output_text = extract_text(response)
+def response_for_log(response: Any, *, extract_text_fn: Any = None) -> dict[str, Any]:
+    extractor = extract_text_fn or extract_text
+    output_text = extractor(response)
     return {
         "type": type(response).__name__,
         "id": getattr(response, "id", None),
@@ -274,4 +278,26 @@ def truncate_text(value: str | None, max_chars: int) -> str | None:
 
 
 def extract_text(response: Any) -> str:
-    return (getattr(response, "output_text", "") or "").strip()
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    output = getattr(response, "output", None)
+    if not isinstance(output, list):
+        return ""
+
+    parts: list[str] = []
+    for item in output:
+        item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
+        if item_type != "message":
+            continue
+        content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+            if block_type == "output_text":
+                text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+    return "\n".join(parts).strip()

@@ -10,6 +10,7 @@ class AgentToolCall:
     method: str
     arguments: dict[str, Any]
     raw: dict[str, Any]
+    call_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -19,6 +20,7 @@ class AgentToolResult:
     ok: bool
     result: Any = None
     error: str | None = None
+    call_id: str | None = None
 
     def to_protocol(self) -> dict[str, Any]:
         return {
@@ -27,6 +29,7 @@ class AgentToolResult:
             "ok": self.ok,
             "result": self.result,
             "error": self.error,
+            "call_id": self.call_id,
         }
 
 

@@ -1,72 +1,78 @@
 # Lord of the Machines
 
-Lord of the Machines es el nuevo laboratorio para construir una solución autónoma de IA que pueda leer su propio código, mejorar sus herramientas y avanzar hacia una misión dada.
+Lord of the Machines is a new lab for building an autonomous AI system that can read its own code, improve its own tools, and move toward a mission it is given.
 
-Este primer corte crea solo la base correcta: un agente LLM genérico, configurable y testeado. Aún no hay servidor autónomo ni bucle de auto-programación; eso debe montarse encima de este núcleo.
+This first cut focuses on getting the foundation right: a generic, configurable, and tested LLM agent core, plus the first serious tool package for software development work. There is no autonomous mission server or self-programming loop yet; those layers should be built on top of this core.
 
-## Estado Actual
+## Current Status
 
-Incluido:
+Included so far:
 
-- Estructura Python estándar con `src/`, `tests/`, `config/`, `pyproject.toml` y paquete instalable.
-- `BaseAgent`, mantenido como nombre porque representa bien la primitiva base: una capa de abstracción sobre un LLM, no un agente de dominio.
-- `BaseAgent` queda como fachada/orquestador; las piezas grandes viven en módulos dedicados:
-  - `config.py`: configuración, defaults y números con nombre.
-  - `payload.py`: construcción de payload, instructions, envelope e input.
-  - `transport.py`: OpenAI Responses API, retries, rate-limit y verbosity fallback.
-  - `history.py`: historial local y presupuesto de contexto.
-  - `parser.py`: parsing/validación del contrato de salida.
-  - `tools.py` y `memory.py`: registro/ejecución de herramientas y memoria interna.
-  - `prompt_cache.py`: generación de `prompt_cache_key`.
-  - `rate_limit.py`, `tokens.py`, `schema.py`, `replies.py`, `errors.py`: primitivas pequeñas.
-- Configuración separada por responsabilidades:
-  - `provider`: proveedor, modelo, API key env y override por env.
-  - `agent`: prompt, memoria, reparaciones y rondas de herramientas.
-  - `reply`: herramienta/metodo/campo usados para extraer mensajes finales.
-  - `envelope`: contrato configurable de entrada y salida.
-  - `context`: historial local y presupuesto de contexto.
-  - `transport`: rate limit, retries y backoff.
-  - `prompt_cache`: cache key estable y lista de campos usados como semilla.
-  - `response_defaults`: parametros de OpenAI Responses API.
-- `AgentEnvelopeSpec`: objeto que define los campos top-level del envelope de entrada.
-- `ToolCallOutputSpec`: objeto que define los campos esperados de salida (`calls/tool/method/arguments` por defecto, pero renombrables).
-- Memoria interna compatible con `memory.remember`, `memory.recall` y `memory.forget`.
-- Reparación de protocolo si el modelo devuelve JSON inválido o una tool/method no permitida.
-- Ejecución de herramientas internas y feedback de resultados al modelo hasta que responda.
-- Historial local limpio: guarda mensajes reales, no envelopes ni prompts de reparación.
-- Preflight token estimation, rate limiter local, retries ante 429 y retry por verbosity no soportada.
-- Prompt cache configurable con `prompt_cache.fields`.
-- Tests unitarios con cliente OpenAI fake.
+- A standard Python project layout with `src/`, `tests/`, `config/`, `pyproject.toml`, and an installable package.
+- `BaseAgent`, kept as the name because it accurately describes the primitive: a configurable abstraction layer over an LLM, not a domain agent.
+- A modular LLM runtime where `BaseAgent` acts as a small orchestrator and larger responsibilities live in dedicated modules:
+  - `config.py`: configuration models, named defaults, and loading.
+  - `payload.py`: payload construction, instructions, envelope, and input shaping.
+  - `providers/`: provider adapters and provider-specific native tool calling behavior.
+  - `transport.py`: OpenAI Responses API integration, retries, rate-limit handling, and verbosity fallback.
+  - `history.py`: local history and context budgeting.
+  - `parser.py`: output parsing and protocol validation.
+  - `tools.py` and `memory.py`: tool registration/execution and internal memory.
+  - `prompt_cache.py`: `prompt_cache_key` generation.
+  - `rate_limit.py`, `tokens.py`, `schema.py`, `replies.py`, and `errors.py`: focused low-level primitives.
+- Configuration separated by responsibility:
+  - `provider`: provider details, model selection, API key env var, and model override env var.
+  - `agent`: system prompt, memory, repair policy, and tool-round limits.
+  - `reply`: the tool/method/argument used to extract final assistant messages.
+  - `tool_calling`: whether the agent uses the internal JSON protocol for tool calls or OpenAI native function calling.
+  - `envelope`: configurable input and output protocol contract.
+  - `context`: local history policy and context-budget behavior.
+  - `transport`: retries, backoff, and rate-limiting behavior.
+  - `prompt_cache`: stable cache-key behavior and field selection.
+  - `response_defaults`: OpenAI Responses API defaults.
+- `AgentEnvelopeSpec`, which defines the top-level fields included in the request envelope.
+- `ToolCallOutputSpec`, which defines the expected output shape (`calls/tool/method/arguments` by default, but fully renameable).
+- Typed `ToolDefinition` and `ToolMethodDefinition` contracts as the internal and public tool model.
+- Strict config loading for `BaseAgent`: only the current structured config schema is accepted.
+- Internal memory compatible with `memory.remember`, `memory.recall`, and `memory.forget`.
+- Protocol repair when the model returns invalid JSON or an unsupported tool/method combination.
+- Tool execution with tool-result feedback loops until the model produces a final answer.
+- Clean local history that stores real conversational messages rather than envelopes or repair prompts.
+- Token estimation preflight, local rate limiting, `429` retries, and unsupported-verbosity fallback.
+- Configurable prompt caching through `prompt_cache.fields`.
+- Unit tests using a fake OpenAI client.
+- A first `agent_tools` package under `src/lord_of_the_machines/agent_tools/`.
+- `software_development_environment`, a tool package for file reads, controlled edits, search, safe command execution, diagnostics, git inspection, project-context detection, and a persisted activity journal in `logs/`.
 
-## Configuración Principal
+## Main Configuration
 
-Archivo por defecto:
+Default config file:
 
 ```text
 config/base_agent.json
 ```
 
-Override por variable de entorno:
+Environment variable override:
 
 ```text
 LORD_OF_THE_MACHINES_BASE_AGENT_CONFIG
 ```
 
-Modelo por defecto:
+Default model:
 
 ```text
 gpt-4.1
 ```
 
-Se puede cambiar sin tocar el JSON con:
+You can override the model without editing JSON via:
 
 ```text
 OPENAI_MODEL
 ```
 
-## Envelope Flexible
+## Flexible Envelope
 
-El agente ya no lleva el envelope incrustado como una forma fija. El objeto `AgentEnvelopeSpec` decide qué campos de entrada se mandan:
+The agent no longer hardcodes a single request envelope shape. `AgentEnvelopeSpec` controls which input fields are sent:
 
 ```python
 AgentEnvelopeSpec(
@@ -81,7 +87,7 @@ AgentEnvelopeSpec(
 )
 ```
 
-Y `ToolCallOutputSpec` decide qué forma de salida se valida:
+And `ToolCallOutputSpec` controls the output shape the agent validates:
 
 ```python
 ToolCallOutputSpec(
@@ -92,11 +98,81 @@ ToolCallOutputSpec(
 )
 ```
 
-Esto permite que futuros agentes usen contratos distintos sin reescribir `BaseAgent`.
+This makes it possible to support multiple protocol contracts without rewriting `BaseAgent`.
 
-## Cache de Tokens / Prompt Cache
+## Tool Calling Modes
 
-La config incluye:
+`BaseAgent` now supports two tool-calling modes:
+
+- `protocol`:
+  the current default. The model receives conceptual tools inside the input envelope and returns a JSON tool-call list that the agent parses and validates locally.
+- `openai_native`:
+  OpenAI native function calling. The agent converts conceptual tools into provider-native function definitions, sends them in the Responses API `tools` field, parses `function_call` items from the response, executes handlers locally, and continues tool rounds using `function_call_output`.
+
+Default config:
+
+```json
+"tool_calling": {
+  "mode": "protocol",
+  "native_name_separator": "__",
+  "include_tools_in_envelope": false,
+  "include_output_contract_in_envelope": false
+}
+```
+
+To enable native OpenAI tool calling:
+
+```json
+"tool_calling": {
+  "mode": "openai_native"
+}
+```
+
+In native mode, the agent still keeps the same internal conceptual tool model, so the same tool package can be used through the old protocol path or the OpenAI-native path.
+
+## Typed Tool Contracts
+
+Tools are no longer treated as loose dictionaries inside the runtime API surface. `BaseAgent.add_tool(...)` and `BaseAgent.list_tools()` now operate on typed `ToolDefinition` and `ToolMethodDefinition` objects.
+
+JSON config files still describe tools as JSON objects, but that mapping is normalized at load time. Once the runtime is alive, the agent works with typed tool contracts end to end and only serializes them when building prompt envelopes or provider-native tool payloads.
+
+## Strict Config Schema
+
+`BaseAgentConfig.from_file(...)` now expects the versioned structured schema only:
+
+- `provider`
+- `agent`
+- `reply`
+- `tool_calling`
+- `envelope`
+- `context`
+- `transport`
+- `prompt_cache`
+- `agent_tools`
+- `response_defaults`
+
+Older ad hoc config shapes such as top-level `protocol`, `system_prompt`, `memory`, or provider shortcuts are intentionally rejected instead of being silently merged.
+
+## Provider Adapters
+
+`BaseAgent` now resolves a provider adapter internally. The first implementation is OpenAI, but the internal shape is now explicit enough to support additional providers cleanly.
+
+Current responsibilities of a provider adapter include:
+
+- building the provider client,
+- sending requests,
+- extracting assistant text,
+- parsing native tool calls,
+- building native tool-result continuation items,
+- adapting the envelope when native tool calling is active,
+- recognizing provider-specific retryable and context-limit errors,
+- and handling provider-specific verbosity fallback rules.
+
+That means OpenAI-specific behavior is no longer smeared across `BaseAgent`, `payload`, and `transport` as ad hoc conditionals.
+
+## Prompt Cache
+
+The config includes:
 
 ```json
 "prompt_cache": {
@@ -107,29 +183,59 @@ La config incluye:
 }
 ```
 
-La lista `fields` define qué partes estables entran en la `prompt_cache_key`. Por defecto no incluye `input`, para que la key no cambie en cada mensaje. Si una misión necesita aislar cache por prompt o por tenant, se puede añadir `input`, `metadata.tenant`, etc., sabiendo que eso reduce reutilización.
+The `fields` list controls which stable payload parts feed into `prompt_cache_key`. By default it does not include `input`, so the key does not change on every user message. If a mission needs cache isolation by prompt, tenant, or similar dimensions, those fields can be added deliberately at the cost of lower cache reuse.
 
-## Ejecutar Tests
+## Software Development Environment Tool
 
-Desde la carpeta del proyecto:
+The first tool package is structured as a proper package rather than a single oversized file:
+
+```text
+src/lord_of_the_machines/agent_tools/software_development_environment/
+```
+
+Main pieces:
+
+- `tool.py`: thin public facade and `install()` entry point for `BaseAgent`.
+- `config.py`: tool configuration and named defaults.
+- `policy.py`: explicit permission and execution policies.
+- `contracts.py`: typed request and result models for every operation.
+- `definition.py`: tool contract exposed to the LLM.
+- `support.py`: shared helpers, path safety, hashing, journaling, and handler instrumentation.
+- `workspace.py`: tree listing, file reads, search, and project context detection.
+- `editing.py`: controlled writes, replacements, insertions, moves, and deletes.
+- `commands.py`: safe command execution, diagnostics, and git inspection.
+- `journal.py`: persisted JSONL activity journal.
+
+The goal is to give an LLM a controlled software workspace interface without mixing project navigation, file mutation, command execution, and journaling into one large module.
+
+The tool now has two formal guardrail layers:
+
+- `SoftwareDevelopmentEnvironmentPermissionPolicy` controls what categories of actions are allowed at all, such as writes, destructive operations, commands, diagnostics, git inspection, and protected-path writes.
+- `SoftwareDevelopmentEnvironmentExecutionPolicy` controls runtime limits such as maximum destructive scope and command timeout ceilings.
+
+Operations inside the tool parse their request payloads into typed request models and return typed result models before serializing them back to plain mappings for the agent runtime.
+
+## Running Tests
+
+From the project root:
 
 ```powershell
 $env:PYTHONPATH = "src"
 python -m unittest discover -s tests
 ```
 
-## Próximo Trabajo
+## Next Work
 
-Falta construir la capa autónoma:
+The autonomous layer still needs to be built:
 
-- CLI/server que arranque con una misión.
-- Lector seguro del propio repositorio.
-- Planner inicial que convierta la misión en backlog ejecutable.
-- Herramientas de edición, ejecución de tests y análisis de resultados.
-- Registro persistente de decisiones, cambios y objetivos.
-- Sandboxing operativo para que el sistema pueda tocar código sin destruir trabajo humano.
-- Agentes especializados: arquitecto, implementador, verificador, toolmaker, reviewer.
-- API/MCP para exponer herramientas internas.
-- Política de permisos y límites: qué puede editar, ejecutar, instalar o publicar.
+- A CLI or server that starts from a mission.
+- Safe self-repository reading strategies for autonomous runs.
+- An initial planner that converts a mission into an executable backlog.
+- Orchestration of multiple tools and specialized agents on top of `BaseAgent`.
+- Long-term mission decision logging above the low-level operational tool journal.
+- Operational sandboxing so the system can modify code without damaging human work.
+- Specialized agents such as architect, implementer, verifier, toolmaker, and reviewer.
+- API and MCP surfaces for exposing internal capabilities.
+- A clear permission model covering what the system may edit, execute, install, or publish.
 
-La idea es que el servidor de misión viva en `src/lord_of_the_machines/mission` y use `llm.BaseAgent` como primitiva, no al revés.
+The long-term intent is for the mission runtime to live in `src/lord_of_the_machines/mission` and use `llm.BaseAgent` as a primitive, not the other way around.

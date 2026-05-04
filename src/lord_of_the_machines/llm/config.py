@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from lord_of_the_machines.llm.envelope import AgentEnvelopeSpec, ToolCallOutputSpec
+from lord_of_the_machines.llm.tool_definitions import ToolDefinition, ensure_tool_definitions
 from lord_of_the_machines.runtime.paths import DEFAULT_BASE_AGENT_CONFIG
 
 
@@ -33,6 +34,20 @@ DEFAULT_RATE_LIMIT_SAFETY_MARGIN_TOKENS = 512
 DEFAULT_PROMPT_CACHE_PREFIX = "lotm"
 DEFAULT_PROMPT_CACHE_RETENTION = "24h"
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
+DEFAULT_TOOL_CALLING_MODE = "protocol"
+DEFAULT_NATIVE_TOOL_NAME_SEPARATOR = "__"
+ROOT_CONFIG_KEYS = {
+    "provider",
+    "agent",
+    "reply",
+    "tool_calling",
+    "envelope",
+    "context",
+    "transport",
+    "prompt_cache",
+    "agent_tools",
+    "response_defaults",
+}
 
 RESPONSE_PARAM_NAMES = (
     "background",
@@ -77,7 +92,22 @@ def load_base_agent_settings(config_path: str | Path | None = None) -> dict[str,
 
     if not isinstance(settings, dict):
         raise ValueError(f"Base agent config must be a JSON object: {path}")
+    unknown = sorted(set(settings) - ROOT_CONFIG_KEYS)
+    if unknown:
+        raise ValueError(
+            "Unsupported base agent config field(s): "
+            f"{', '.join(unknown)}. Use the structured sections: {', '.join(sorted(ROOT_CONFIG_KEYS))}."
+        )
     return copy.deepcopy(settings)
+
+
+def load_mapping_section(settings: dict[str, Any], section_name: str) -> dict[str, Any]:
+    value = settings.get(section_name)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Config section '{section_name}' must be a JSON object.")
+    return copy.deepcopy(value)
 
 
 @dataclass(slots=True)
@@ -188,6 +218,24 @@ class ReplyConfig:
         )
 
 
+@dataclass(slots=True)
+class ToolCallingConfig:
+    mode: str = DEFAULT_TOOL_CALLING_MODE
+    native_name_separator: str = DEFAULT_NATIVE_TOOL_NAME_SEPARATOR
+    include_tools_in_envelope: bool = False
+    include_output_contract_in_envelope: bool = False
+
+    @classmethod
+    def from_mapping(cls, settings: dict[str, Any] | None) -> ToolCallingConfig:
+        settings = settings or {}
+        return cls(
+            mode=str(settings.get("mode") or DEFAULT_TOOL_CALLING_MODE),
+            native_name_separator=str(settings.get("native_name_separator") or DEFAULT_NATIVE_TOOL_NAME_SEPARATOR),
+            include_tools_in_envelope=bool(settings.get("include_tools_in_envelope", False)),
+            include_output_contract_in_envelope=bool(settings.get("include_output_contract_in_envelope", False)),
+        )
+
+
 def default_response_defaults() -> dict[str, Any]:
     return {
         "background": False,
@@ -210,9 +258,10 @@ class BaseAgentConfig:
     transport: TransportConfig = field(default_factory=TransportConfig)
     prompt_cache: PromptCacheConfig = field(default_factory=PromptCacheConfig)
     reply: ReplyConfig = field(default_factory=ReplyConfig)
+    tool_calling: ToolCallingConfig = field(default_factory=ToolCallingConfig)
     system_prompt: str | None = None
     memory: list[Any] = field(default_factory=list)
-    agent_tools: list[dict[str, Any]] = field(default_factory=list)
+    agent_tools: list[ToolDefinition] = field(default_factory=list)
     text_verbosity: str = DEFAULT_TEXT_VERBOSITY
     output_repair_attempts: int = DEFAULT_OUTPUT_REPAIR_ATTEMPTS
     max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS
@@ -222,34 +271,27 @@ class BaseAgentConfig:
     def from_file(cls, config_path: str | Path | None = None, **overrides: Any) -> BaseAgentConfig:
         settings = load_base_agent_settings(config_path)
 
-        provider_settings = dict(settings.get("provider") or {})
-        if isinstance(settings.get("model"), str):
-            provider_settings.setdefault("model", settings["model"])
-        if settings.get("api_key_env") is not None:
-            provider_settings.setdefault("api_key_env", settings["api_key_env"])
-        if settings.get("model_env") is not None:
-            provider_settings.setdefault("model_env", settings["model_env"])
-
-        envelope_settings = settings.get("envelope") or settings.get("protocol") or {}
-        protocol_settings = settings.get("protocol") or {}
-        agent_settings = settings.get("agent") or {}
+        provider_settings = load_mapping_section(settings, "provider")
+        envelope_settings = load_mapping_section(settings, "envelope")
+        agent_settings = load_mapping_section(settings, "agent")
         response_defaults = default_response_defaults()
-        response_defaults.update(copy.deepcopy(settings.get("response_defaults") or {}))
+        response_defaults.update(load_mapping_section(settings, "response_defaults"))
 
         config = cls(
             config_path=config_path or os.getenv(CONFIG_ENV_VAR) or str(DEFAULT_CONFIG_PATH),
             model=ModelConfig.from_mapping(provider_settings),
             envelope=AgentEnvelopeSpec.from_mapping(envelope_settings),
-            context=ContextConfig.from_mapping(settings.get("context")),
-            transport=TransportConfig.from_mapping(settings.get("transport")),
-            prompt_cache=PromptCacheConfig.from_mapping(settings.get("prompt_cache")),
-            reply=ReplyConfig.from_mapping(settings.get("reply") or {"output_language": protocol_settings.get("output_language")}),
-            system_prompt=settings.get("system_prompt") or agent_settings.get("system_prompt"),
-            memory=copy.deepcopy(settings.get("memory") or agent_settings.get("memory") or []),
-            agent_tools=copy.deepcopy(settings.get("agent_tools") or []),
-            text_verbosity=str(agent_settings.get("text_verbosity") or protocol_settings.get("text_verbosity") or DEFAULT_TEXT_VERBOSITY),
-            output_repair_attempts=int(agent_settings.get("output_repair_attempts", protocol_settings.get("output_repair_attempts", DEFAULT_OUTPUT_REPAIR_ATTEMPTS))),
-            max_tool_rounds=int(agent_settings.get("max_tool_rounds", protocol_settings.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS))),
+            context=ContextConfig.from_mapping(load_mapping_section(settings, "context")),
+            transport=TransportConfig.from_mapping(load_mapping_section(settings, "transport")),
+            prompt_cache=PromptCacheConfig.from_mapping(load_mapping_section(settings, "prompt_cache")),
+            reply=ReplyConfig.from_mapping(load_mapping_section(settings, "reply")),
+            tool_calling=ToolCallingConfig.from_mapping(load_mapping_section(settings, "tool_calling")),
+            system_prompt=agent_settings.get("system_prompt"),
+            memory=copy.deepcopy(agent_settings.get("memory") or []),
+            agent_tools=ensure_tool_definitions(settings.get("agent_tools") or []),
+            text_verbosity=str(agent_settings.get("text_verbosity") or DEFAULT_TEXT_VERBOSITY),
+            output_repair_attempts=int(agent_settings.get("output_repair_attempts", DEFAULT_OUTPUT_REPAIR_ATTEMPTS)),
+            max_tool_rounds=int(agent_settings.get("max_tool_rounds", DEFAULT_MAX_TOOL_ROUNDS)),
             response_defaults=response_defaults,
         )
         config.apply_overrides(overrides)
@@ -277,18 +319,12 @@ class BaseAgentConfig:
                 self.envelope = value if isinstance(value, AgentEnvelopeSpec) else AgentEnvelopeSpec.from_mapping(value)
             elif key == "output_spec":
                 self.envelope.output = value if isinstance(value, ToolCallOutputSpec) else ToolCallOutputSpec.from_mapping(value)
-            elif key == "protocol_enabled":
-                self.envelope.enabled = bool(value)
-            elif key == "protocol_version":
-                self.envelope.version = str(value)
-            elif key == "protocol_instructions":
-                self.envelope.instructions = str(value)
             elif key == "system_prompt":
                 self.system_prompt = value
             elif key == "memory":
                 self.memory = copy.deepcopy(value)
             elif key == "agent_tools":
-                self.agent_tools = copy.deepcopy(value)
+                self.agent_tools = ensure_tool_definitions(value)
             elif key == "text_verbosity":
                 self.text_verbosity = str(value)
             elif key == "output_language":
@@ -299,6 +335,16 @@ class BaseAgentConfig:
                 self.reply.method = str(value)
             elif key == "reply_message_argument":
                 self.reply.message_argument = str(value)
+            elif key == "tool_calling":
+                self.tool_calling = value if isinstance(value, ToolCallingConfig) else ToolCallingConfig.from_mapping(value)
+            elif key == "tool_calling_mode":
+                self.tool_calling.mode = str(value)
+            elif key == "native_tool_name_separator":
+                self.tool_calling.native_name_separator = str(value)
+            elif key == "include_tools_in_envelope":
+                self.tool_calling.include_tools_in_envelope = bool(value)
+            elif key == "include_output_contract_in_envelope":
+                self.tool_calling.include_output_contract_in_envelope = bool(value)
             elif key == "output_repair_attempts":
                 self.output_repair_attempts = int(value)
             elif key == "max_tool_rounds":
@@ -337,7 +383,7 @@ class BaseAgentConfig:
                 self.prompt_cache.key_prefix = str(value)
             elif key == "prompt_cache_fields":
                 self.prompt_cache.fields = tuple(str(field_name) for field_name in value)
-            elif key == "prompt_cache_retention_default":
+            elif key == "prompt_cache_retention":
                 self.prompt_cache.retention = value
             else:
                 unknown.append(key)

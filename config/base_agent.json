@@ -18,6 +18,12 @@
     "message_argument": "message",
     "output_language": "English"
   },
+  "tool_calling": {
+    "mode": "protocol",
+    "native_name_separator": "__",
+    "include_tools_in_envelope": false,
+    "include_output_contract_in_envelope": false
+  },
   "envelope": {
     "enabled": true,
     "version": "lord_of_the_machines.agent.v1",

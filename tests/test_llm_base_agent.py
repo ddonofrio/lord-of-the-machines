@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from lord_of_the_machines.llm import (
     AgentEnvelopeSpec,
     AgentProtocolError,
     BaseAgent,
+    BaseAgentConfig,
     EnvelopeField,
     TokenRateLimiter,
+    ToolDefinition,
     ToolCallOutputSpec,
+    ToolMethodDefinition,
 )
 from tests.helpers.fake_openai import (
     FakeClient,
@@ -19,6 +24,7 @@ from tests.helpers.fake_openai import (
     FakeUnsupportedVerbosityError,
 )
 from tests.helpers.outputs import custom_reply_output, reply_output, tool_output
+from tests.helpers.outputs import native_function_response, native_message_response
 
 
 class FakeClock:
@@ -238,6 +244,114 @@ class BaseAgentTests(unittest.TestCase):
 
         with self.assertRaises(AgentProtocolError):
             agent.query("hello")
+
+    def test_openai_native_tool_calling_builds_provider_tools_and_executes_tool_rounds(self) -> None:
+        client = FakeClient(
+            [
+                native_function_response(
+                    {
+                        "name": "memory__remember",
+                        "arguments": {"key": "mission", "value": "bootstrap"},
+                        "call_id": "call_memory",
+                    },
+                    response_id="resp_native_1",
+                ),
+                native_message_response("done", response_id="resp_native_2"),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None, tool_calling_mode="openai_native")
+
+        reply = agent.query("remember the mission")
+
+        self.assertEqual(reply.message, "done")
+        first_payload = client.responses.calls[0]
+        self.assertEqual(first_payload["tools"][0]["type"], "function")
+        self.assertIn("memory__remember", [tool["name"] for tool in first_payload["tools"]])
+        self.assertEqual(first_payload["text"]["format"]["type"], "text")
+
+        envelope = json.loads(first_payload["input"])
+        self.assertNotIn("output_contract", envelope)
+        self.assertEqual(envelope["runtime_context"]["tool_calling"]["mode"], "openai_native")
+        self.assertNotIn("available_tools", envelope["runtime_context"])
+
+        second_payload = client.responses.calls[1]
+        self.assertEqual(second_payload["previous_response_id"], "resp_native_1")
+        self.assertEqual(second_payload["input"][0]["type"], "function_call_output")
+        self.assertEqual(second_payload["input"][0]["call_id"], "call_memory")
+        self.assertEqual(agent.config.memory[0]["key"], "mission")
+
+    def test_openai_native_tool_calling_supports_reply_tool_calls(self) -> None:
+        client = FakeClient(
+            [
+                native_function_response(
+                    {
+                        "name": "reply__send_message",
+                        "arguments": {"message": "native hello"},
+                        "call_id": "call_reply",
+                    }
+                )
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None, tool_calling_mode="openai_native")
+
+        reply = agent.query("say hello")
+
+        self.assertEqual(reply.message, "native hello")
+        self.assertEqual(reply.tool_calls[0].call_id, "call_reply")
+
+    def test_unknown_provider_is_rejected_early(self) -> None:
+        with self.assertRaises(ValueError):
+            BaseAgent.new(client=FakeClient(), rate_limiter=None, provider="unknown")
+
+    def test_legacy_config_sections_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            config_path = Path(tempdir) / "legacy-base-agent.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "provider": {"provider": "openai", "model": "gpt-4.1"},
+                        "protocol": {"enabled": True},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ValueError):
+                BaseAgentConfig.from_file(config_path)
+
+    def test_tools_api_is_typed_and_rejects_legacy_mappings(self) -> None:
+        agent = BaseAgent.new(client=FakeClient(), rate_limiter=None)
+
+        listed_tools = agent.list_tools()
+
+        self.assertTrue(all(isinstance(tool, ToolDefinition) for tool in listed_tools))
+        self.assertTrue(any(tool.name == "reply" for tool in listed_tools))
+
+        with self.assertRaises(TypeError):
+            agent.add_tool(
+                {
+                    "name": "legacy",
+                    "methods": [{"name": "run"}],
+                }
+            )
+
+        agent.add_tool(
+            ToolDefinition(
+                name="typed_tool",
+                methods=[
+                    ToolMethodDefinition(
+                        name="run",
+                        arguments_schema={
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {},
+                            "required": [],
+                        },
+                    )
+                ],
+            )
+        )
+        self.assertTrue(any(tool.name == "typed_tool" for tool in agent.list_tools()))
 
 
 if __name__ == "__main__":

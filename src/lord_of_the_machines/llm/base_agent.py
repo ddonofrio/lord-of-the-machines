@@ -10,7 +10,6 @@ from lord_of_the_machines.llm.errors import AgentContextBudgetError, AgentProtoc
 from lord_of_the_machines.llm.history import HistoryManager
 from lord_of_the_machines.llm.log_views import (
     config_for_log,
-    extract_text,
     payload_for_log,
     rate_limit_reservation_for_log,
     reply_for_log,
@@ -24,8 +23,10 @@ from lord_of_the_machines.llm.payload import AgentPayloadBuilder
 from lord_of_the_machines.llm.parser import AgentOutputParser
 from lord_of_the_machines.llm.prompt_cache import PromptCacheManager
 from lord_of_the_machines.llm.protocol_messages import build_repair_message, build_tool_results_message
+from lord_of_the_machines.llm.providers import get_provider_adapter
 from lord_of_the_machines.llm.rate_limit import TokenRateLimiter
 from lord_of_the_machines.llm.replies import AgentReply, AgentToolCall, AgentToolResult
+from lord_of_the_machines.llm.tool_definitions import ToolDefinition
 from lord_of_the_machines.llm.tokens import TokenCounter, estimate_response_tokens
 from lord_of_the_machines.llm.tools import (
     ToolExecutor,
@@ -53,12 +54,17 @@ class BaseAgent:
         self.config = config or BaseAgentConfig.from_file()
         self.last_response_id: str | None = None
         self._logger = get_logger("agents.base_agent")
+        self._provider = get_provider_adapter(self.config.model.provider)
+        if not self._provider.supports_tool_calling_mode(self.config.tool_calling.mode):
+            raise ValueError(
+                f"Provider '{self.config.model.provider}' does not support tool_calling.mode='{self.config.tool_calling.mode}'."
+            )
         self._token_counter = TokenCounter(
             model=self.config.model.effective_name(),
             encoding_name=self.config.context.token_counter_encoding,
             fallback_chars_per_token=self.config.context.fallback_chars_per_token,
         )
-        self._client = client or self._make_openai_client()
+        self._client = client or self._make_provider_client()
         self._rate_limiter = resolve_rate_limiter(self.config, rate_limiter)
         self._history = HistoryManager(
             config=self.config,
@@ -71,6 +77,7 @@ class BaseAgent:
         self._prompt_cache = PromptCacheManager(self.config)
         self._payloads = AgentPayloadBuilder(
             config=self.config,
+            provider=self._provider,
             history=self._history,
             prompt_cache=self._prompt_cache,
         )
@@ -89,9 +96,10 @@ class BaseAgent:
             logger=self._logger,
             log_id=self._log_id,
             payload_for_log=payload_for_log,
-            response_for_log=response_for_log,
+            response_for_log=lambda response: response_for_log(response, extract_text_fn=self._provider.extract_text),
             rate_limit_reservation_for_log=rate_limit_reservation_for_log,
             log_json=log_json,
+            provider=self._provider,
         )
         log_json(
             self._logger,
@@ -140,20 +148,20 @@ class BaseAgent:
             raise ValueError("output_language must be a non-empty string.")
         self.config.reply.output_language = value.strip()
 
-    def list_tools(self) -> list[dict[str, Any]]:
-        return self._tools_for_prompt()
+    def list_tools(self) -> list[ToolDefinition]:
+        return copy.deepcopy(self.config.agent_tools)
 
-    def add_tool(self, tool: dict[str, Any], handlers: dict[str, ToolHandler] | None = None) -> None:
-        validate_tool_definition(tool)
-        tool_name = tool["name"]
+    def add_tool(self, tool: ToolDefinition, handlers: dict[str, ToolHandler] | None = None) -> None:
+        tool_definition = validate_tool_definition(tool)
+        tool_name = tool_definition.name
         self.remove_tool(tool_name)
-        self.config.agent_tools.append(copy.deepcopy(tool))
+        self.config.agent_tools.append(tool_definition)
         log_json(
             self._logger,
             "base_agent.add_tool",
             {
                 "agent_id": self._log_id(),
-                "tool": tool,
+                "tool": tool_definition,
                 "handler_methods": sorted((handlers or {}).keys()),
             },
         )
@@ -161,7 +169,7 @@ class BaseAgent:
             self.register_tool_handler(tool_name, method_name, handler)
 
     def remove_tool(self, tool_name: str) -> None:
-        self.config.agent_tools = [tool for tool in self.config.agent_tools if tool.get("name") != tool_name]
+        self.config.agent_tools = [tool for tool in self.config.agent_tools if tool.name != tool_name]
         self._tools.remove_tool(tool_name)
 
     def register_tool_handler(self, tool_name: str, method_name: str, handler: ToolHandler) -> None:
@@ -216,7 +224,7 @@ class BaseAgent:
             overrides=overrides,
             disabled_tools=disabled_tool_names,
         )
-        reply = self._send_with_protocol_repair(
+        reply = self._send_reply(
             payload,
             current_message=message,
             original_message=message,
@@ -257,24 +265,54 @@ class BaseAgent:
                 )
 
             remaining_tool_rounds -= 1
-            tool_results_message = self._build_tool_results_message(
-                original_message=message,
-                tool_results=tool_results,
-            )
-            payload = self._build_payload(
-                tool_results_message,
-                continue_previous=False,
-                overrides=overrides,
-                disabled_tools=disabled_tool_names,
-            )
-            reply = self._send_with_protocol_repair(
-                payload,
-                current_message=tool_results_message,
-                original_message=message,
-                repair_attempts=repair_attempts,
-                overrides=overrides,
-                disabled_tools=disabled_tool_names,
-            )
+            if self._provider.uses_native_tool_calling(self.config):
+                payload = self._build_native_tool_results_payload(
+                    tool_results,
+                    previous_response_id=reply.response_id,
+                    overrides=overrides,
+                    disabled_tools=disabled_tool_names,
+                )
+                reply = self._request_native_tool_reply(payload)
+            else:
+                tool_results_message = self._build_tool_results_message(
+                    original_message=message,
+                    tool_results=tool_results,
+                )
+                payload = self._build_payload(
+                    tool_results_message,
+                    continue_previous=False,
+                    overrides=overrides,
+                    disabled_tools=disabled_tool_names,
+                )
+                reply = self._send_with_protocol_repair(
+                    payload,
+                    current_message=tool_results_message,
+                    original_message=message,
+                    repair_attempts=repair_attempts,
+                    overrides=overrides,
+                    disabled_tools=disabled_tool_names,
+                )
+
+    def _send_reply(
+        self,
+        payload: dict[str, Any],
+        *,
+        current_message: str | list[dict[str, Any]] | dict[str, Any],
+        original_message: str | list[dict[str, Any]] | dict[str, Any],
+        repair_attempts: int | None,
+        overrides: dict[str, Any],
+        disabled_tools: set[str] | None = None,
+    ) -> AgentReply:
+        if self._provider.uses_native_tool_calling(self.config):
+            return self._request_reply(payload, current_message, overrides, disabled_tools)
+        return self._send_with_protocol_repair(
+            payload,
+            current_message=current_message,
+            original_message=original_message,
+            repair_attempts=repair_attempts,
+            overrides=overrides,
+            disabled_tools=disabled_tools,
+        )
 
     def _send_with_protocol_repair(
         self,
@@ -359,6 +397,23 @@ class BaseAgent:
             disabled_tools=disabled_tools,
         )
 
+    def _build_native_tool_results_payload(
+        self,
+        tool_results: list[AgentToolResult],
+        *,
+        previous_response_id: str | None,
+        overrides: dict[str, Any],
+        disabled_tools: set[str] | None = None,
+    ) -> dict[str, Any]:
+        if not previous_response_id:
+            raise AgentProtocolError("Native tool calling requires a previous response id for tool result continuation.")
+        return self._payloads.build_native_tool_result_payload(
+            tool_results,
+            previous_response_id=previous_response_id,
+            overrides=overrides,
+            disabled_tools=disabled_tools,
+        )
+
     def _build_repair_message(
         self,
         *,
@@ -391,10 +446,16 @@ class BaseAgent:
         return self._payloads.tools_for_prompt(disabled_tools=disabled_tools)
 
     def _make_reply(self, response: Any) -> AgentReply:
-        text = extract_text(response)
+        text = self._provider.extract_text(response)
         tool_calls: list[AgentToolCall] = []
         parse_error: str | None = None
-        if self.config.envelope.enabled:
+        if self._provider.uses_native_tool_calling(self.config):
+            tool_calls, parse_error = self._provider.parse_native_tool_calls(
+                response,
+                agent_tools=self.config.agent_tools,
+                config=self.config,
+            )
+        elif self.config.envelope.enabled:
             parser = AgentOutputParser(output_spec=self.config.envelope.output, agent_tools=self.config.agent_tools)
             tool_calls, parse_error = parser.parse_text(text)
         reply = AgentReply(
@@ -410,6 +471,21 @@ class BaseAgent:
             reply_message_argument=self.config.reply.message_argument,
         )
         log_json(self._logger, "base_agent.reply.parsed", {"agent_id": self._log_id(), "reply": reply_for_log(reply)})
+        return reply
+
+    def _request_native_tool_reply(self, payload: dict[str, Any]) -> AgentReply:
+        event_prefix = f"{self.config.model.provider}.responses.create.native_tool_results"
+        response = self._transport.create_with_request_retries(
+            payload,
+            request_event=f"{event_prefix}.request",
+            response_event=f"{event_prefix}.response",
+            error_event=f"{event_prefix}.error",
+            rate_limit_event=f"{event_prefix}.rate_limit_retry",
+            verbosity_event=f"{event_prefix}.verbosity_retry",
+        )
+        reply = self._make_reply(response)
+        if reply.response_id:
+            self.last_response_id = reply.response_id
         return reply
 
     def _install_builtin_tool_handlers(self) -> None:
@@ -440,20 +516,11 @@ class BaseAgent:
     def _log_id(self) -> str:
         return hex(id(self))
 
-    def _make_openai_client(self) -> Any:
-        if self.config.model.provider != "openai":
-            raise ValueError(f"Unsupported provider '{self.config.model.provider}'. Inject a client for custom providers.")
-
+    def _make_provider_client(self) -> Any:
         api_key = os.getenv(self.config.model.api_key_env)
         if not api_key:
             raise MissingApiKeyError(f"Missing {self.config.model.api_key_env}.")
-
-        try:
-            from openai import OpenAI
-        except ModuleNotFoundError as exc:
-            raise RuntimeError("Missing openai package. Run: python -m pip install -r requirements.txt") from exc
-
-        return OpenAI(api_key=api_key)
+        return self._provider.build_client(api_key=api_key)
 
 
 __all__ = [

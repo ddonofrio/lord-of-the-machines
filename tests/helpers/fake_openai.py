@@ -23,6 +23,28 @@ class FakeResponse:
     id: str = "resp_fake"
     status: str = "completed"
     usage: FakeUsage = field(default_factory=FakeUsage)
+    output: list[Any] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class FakeFunctionCall:
+    name: str
+    arguments: str
+    call_id: str = "call_fake"
+    id: str = "fc_fake"
+    type: str = "function_call"
+
+
+@dataclass(slots=True)
+class FakeOutputText:
+    text: str
+    type: str = "output_text"
+
+
+@dataclass(slots=True)
+class FakeMessage:
+    content: list[Any]
+    type: str = "message"
 
 
 class FakeResponses:
