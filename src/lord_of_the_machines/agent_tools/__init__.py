@@ -5,6 +5,10 @@ from lord_of_the_machines.agent_tools.software_development_environment import (
     SoftwareDevelopmentEnvironmentTool,
     SoftwareDevelopmentEnvironmentToolConfig,
 )
+from lord_of_the_machines.agent_tools.todo_list import (
+    TodoListTool,
+    TodoListToolConfig,
+)
 
 __all__ = [
     "SoftwareDevelopmentEnvironmentExecutionPolicy",
@@ -12,4 +16,6 @@ __all__ = [
     "SoftwareDevelopmentEnvironmentPolicyError",
     "SoftwareDevelopmentEnvironmentTool",
     "SoftwareDevelopmentEnvironmentToolConfig",
+    "TodoListTool",
+    "TodoListToolConfig",
 ]

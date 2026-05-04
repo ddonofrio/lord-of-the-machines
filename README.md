@@ -43,6 +43,7 @@ Included so far:
 - Unit tests using a fake OpenAI client.
 - A first `agent_tools` package under `src/lord_of_the_machines/agent_tools/`.
 - `software_development_environment`, a tool package for file reads, controlled edits, search, safe command execution, diagnostics, git inspection, project-context detection, and a persisted activity journal in `logs/`.
+- `todo_list`, a tool package for per-agent TODO list files with task creation, completion/uncompletion, removal, and progress inspection.
 
 ## Main Configuration
 
@@ -214,6 +215,35 @@ The tool now has two formal guardrail layers:
 - `SoftwareDevelopmentEnvironmentExecutionPolicy` controls runtime limits such as maximum destructive scope and command timeout ceilings.
 
 Operations inside the tool parse their request payloads into typed request models and return typed result models before serializing them back to plain mappings for the agent runtime.
+
+## Todo List Tool
+
+The `todo_list` package provides a lightweight task execution board for agents, backed by files on disk and separated per agent id.
+
+```text
+src/lord_of_the_machines/agent_tools/todo_list/
+```
+
+Capabilities:
+
+- List agents that have TODO directories and summarize open/completed task counts.
+- List TODO lists for one agent with per-list progress.
+- Create a TODO list file from scratch (optionally with initial tasks).
+- Open a TODO list and read all task states.
+- Add one or more tasks to an existing list.
+- Mark tasks as completed or unmark them as pending.
+- Remove tasks.
+- Delete TODO list files.
+
+Storage model:
+
+- One root directory configured by `TodoListToolConfig.root_path`.
+- One subdirectory per `agent_id`.
+- One JSON file per list (`<list_name>.todo.json` by default).
+
+Naming safety:
+
+- `agent_id` and `list_name` use a strict slug pattern (`letters`, `numbers`, `_`, `-`, max `64` chars) to keep file paths predictable and safe.
 
 ## Running Tests
 
