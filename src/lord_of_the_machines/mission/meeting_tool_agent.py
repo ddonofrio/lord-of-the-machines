@@ -12,6 +12,11 @@ from lord_of_the_machines.mission.contracts import (
     RoleTaskRequest,
     RoleTaskResult,
 )
+from lord_of_the_machines.mission.prompting import (
+    RolePromptProfile,
+    compose_system_prompt,
+    default_role_profile,
+)
 
 
 DEFAULT_RUN_MEETING_SCHEMA = {
@@ -34,6 +39,10 @@ DEFAULT_RUN_MEETING_SCHEMA = {
 
 @dataclass(slots=True)
 class MeetingToolAgentConfig:
+    role_name: str = "meeting_organizer"
+    include_golden_rules: bool = True
+    extra_dna_rulesets: tuple[str, ...] = ()
+    role_profile_override: RolePromptProfile | None = None
     tool_name: str = "meeting"
     method_name: str = "run_meeting"
     description: str = (
@@ -54,6 +63,7 @@ class MeetingToolAgent:
     ) -> None:
         self.organizer_agent = organizer_agent
         self.config = config or MeetingToolAgentConfig()
+        self.organizer_agent.set_system_prompt(self._build_system_prompt())
 
     def install(self, host_agent: BaseAgent) -> None:
         host_agent.add_tool(self.definition(), handlers=self.handlers())
@@ -83,6 +93,14 @@ class MeetingToolAgent:
         request = MeetingRequest.from_mapping(arguments)
         result = self.execute_meeting(request)
         return result.to_mapping()
+
+    def _build_system_prompt(self) -> str:
+        profile = self.config.role_profile_override or default_role_profile(self.config.role_name)
+        return compose_system_prompt(
+            profile,
+            include_golden_rules=self.config.include_golden_rules,
+            extra_rulesets=self.config.extra_dna_rulesets,
+        )
 
     def _build_prompt(self, request: MeetingRequest) -> str:
         payload = request.to_mapping()

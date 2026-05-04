@@ -21,8 +21,13 @@ from lord_of_the_machines.mission import (
     MeetingRoleExecutor,
     MeetingToolAgent,
     MeetingToolAgentConfig,
+    RoleAgentFactory,
+    RoleAgentFactoryConfig,
+    RolePromptProfile,
     MissionRuntime,
     MissionRuntimeConfig,
+    compose_system_prompt,
+    default_role_profile,
 )
 
 __all__ = [
@@ -39,8 +44,13 @@ __all__ = [
     "MeetingRoleExecutor",
     "MeetingToolAgent",
     "MeetingToolAgentConfig",
+    "RoleAgentFactory",
+    "RoleAgentFactoryConfig",
+    "RolePromptProfile",
     "MissionRuntime",
     "MissionRuntimeConfig",
+    "compose_system_prompt",
+    "default_role_profile",
     "MissingApiKeyError",
     "ProviderAdapter",
     "ToolDefinition",

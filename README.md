@@ -314,6 +314,12 @@ Main components:
 - `AgentAsToolBridge`: wraps a `BaseAgent` and exposes it as a regular tool method (`run_task`) so other agents can call it through normal tool calling.
 - `MeetingToolAgent`: wraps a specialized meeting organizer agent as a tool (`run_meeting`) and returns a structured meeting result.
 - `MeetingRoleExecutor`: adapter that lets meeting output plug directly into mission-phase execution (`RoleTaskResult`).
+- `prompting.py` and `RoleAgentFactory`: stable, in-repo prompt composition for role agents. Prompts are built from:
+  - global `Golden Rules` shared by all agents,
+  - role charter prompt,
+  - role-specific DNA rulesets.
+
+Prompt composition is intentionally sourced from versioned runtime code modules, not from `.temp/`.
 
 This is an MVP foundation for the CoT-like event loop: it standardizes role execution contracts and phase transitions while still allowing flexible role-specific prompting.
 
