@@ -311,6 +311,7 @@ src/lord_of_the_machines/mission/
 Main components:
 
 - `MissionRuntime`: seeds pending missions into `mission.phase.requested`, consumes events, dispatches role executors, updates mission phase state, and publishes completion/failure/artifact events.
+- `MissionRuntimeConfig.phase_transitions`: supports automatic next-phase scheduling (default MVP flow: `product_direction -> implementation`).
 - `AgentAsToolBridge`: wraps a `BaseAgent` and exposes it as a regular tool method (`run_task`) so other agents can call it through normal tool calling.
 - `MeetingToolAgent`: wraps a specialized meeting organizer agent as a tool (`run_meeting`) and returns a structured meeting result.
 - `MeetingRoleExecutor`: adapter that lets meeting output plug directly into mission-phase execution (`RoleTaskResult`).
@@ -318,10 +319,24 @@ Main components:
   - global `Golden Rules` shared by all agents,
   - role charter prompt,
   - role-specific DNA rulesets.
+- `MissionRunner`: loop controller to create missions, seed events, and execute runtime cycles until idle.
+- `SoftwareDeveloperRoleExecutor`: implementation executor with:
+  - `software_development_environment` tool installed on the role agent,
+  - scoped write-prefix guardrails,
+  - required diagnostics execution before completion.
 
 Prompt composition is intentionally sourced from versioned runtime code modules, not from `.temp/`.
 
 This is an MVP foundation for the CoT-like event loop: it standardizes role execution contracts and phase transitions while still allowing flexible role-specific prompting.
+
+### First MVP Mission Suggestion
+
+`MissionRunner` includes constants for a first self-evolution mission:
+
+- `DEFAULT_SELF_EVOLUTION_MISSION_TITLE`
+- `DEFAULT_SELF_EVOLUTION_MISSION_DESCRIPTION`
+
+Use it to run a small internal refactor mission as the first autonomous execution path.
 
 ## Running Tests
 

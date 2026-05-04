@@ -90,7 +90,7 @@ class MissionRuntimeTests(unittest.TestCase):
             event_bus=self.event_bus,
             artifact_registry=self.artifact_registry,
             role_executors={"product_director": executor},
-            config=MissionRuntimeConfig(max_events_per_run=5),
+            config=MissionRuntimeConfig(max_events_per_run=5, phase_transitions={}),
         )
 
         runtime.seed_pending_missions()
@@ -140,6 +140,39 @@ class MissionRuntimeTests(unittest.TestCase):
 
         self.assertEqual(first_pass["processed"][0]["outcome"]["status"], "needs_follow_up")
         self.assertEqual(second_pass["processed"][0]["outcome"]["status"], "completed")
+
+    def test_completed_phase_schedules_next_phase_when_transition_exists(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_delta",
+                "title": "Delta",
+                "description": "From product direction to implementation",
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={
+                "product_director": FakeRoleExecutor(
+                    RoleTaskResult(status="completed", summary="Direction ready")
+                )
+            },
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        runtime.seed_pending_missions()
+        pass_one = runtime.run_once()
+
+        outcome = pass_one["processed"][0]["outcome"]
+        self.assertEqual(outcome["status"], "completed")
+        self.assertIsNotNone(outcome["next_phase_event"])
+        self.assertEqual(outcome["next_phase_event"]["payload"]["phase"], "implementation")
+
+        mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_delta"})["mission"]
+        self.assertEqual(mission["phase_status"]["product_direction"], "completed")
+        self.assertEqual(mission["phase_status"]["implementation"], "requested")
+        self.assertEqual(mission["status"], "in_progress")
 
 
 if __name__ == "__main__":

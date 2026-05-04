@@ -12,7 +12,6 @@ from lord_of_the_machines.mission.contracts import RoleTaskRequest, RoleTaskResu
 from lord_of_the_machines.mission.events import (
     STATUS_BLOCKED,
     STATUS_COMPLETED,
-    STATUS_FAILED,
     STATUS_NEEDS_FOLLOW_UP,
     TOPIC_ARTIFACT_PUBLISHED,
     TOPIC_PHASE_COMPLETED,
@@ -35,6 +34,18 @@ class MissionRuntimeConfig:
     max_events_per_run: int = 20
     max_follow_up_rounds: int = 3
     include_topics: tuple[str, ...] = (TOPIC_PHASE_REQUESTED,)
+    phase_roles: dict[str, str] = field(
+        default_factory=lambda: {
+            "product_direction": "product_director",
+            "implementation": "software_developer",
+        }
+    )
+    phase_transitions: dict[str, str] = field(
+        default_factory=lambda: {
+            "product_direction": "implementation",
+        }
+    )
+    auto_schedule_next_phase: bool = True
 
 
 @dataclass(slots=True)
@@ -69,6 +80,7 @@ class MissionRuntime:
             phase_status = dict(mission.get("phase_status") or {})
             if phase_status.get(self.config.initial_phase):
                 continue
+            role = self._role_for_phase(self.config.initial_phase)
             objective = self._phase_objective(mission)
             self._mission["update_mission_phase"](
                 {
@@ -87,7 +99,7 @@ class MissionRuntime:
             )
             payload = {
                 "phase": self.config.initial_phase,
-                "role": self.config.initial_role,
+                "role": role,
                 "objective": objective,
                 "context": {
                     "mission_title": mission.get("title"),
@@ -162,7 +174,7 @@ class MissionRuntime:
         if not mission_id:
             raise ValueError("mission_id is required for phase execution.")
         phase = str(payload.get("phase") or self.config.initial_phase)
-        role = str(payload.get("role") or self.config.initial_role)
+        role = str(payload.get("role") or self._role_for_phase(phase))
         objective = str(payload.get("objective") or "").strip()
         if not objective:
             mission = self._mission["get_mission"]({"mission_id": mission_id})["mission"]
@@ -220,6 +232,7 @@ class MissionRuntime:
                 role=role,
                 summary=result.summary,
             )
+            next_phase_event = self._schedule_next_phase_if_needed(mission_id=mission_id, current_phase=phase)
             artifact = self._publish_artifact_if_present(
                 mission_id=mission_id,
                 phase=phase,
@@ -227,7 +240,7 @@ class MissionRuntime:
                 result=result,
             )
             self._update_mission_lifecycle_on_completion(mission_id)
-            return {"status": result.status, "artifact": artifact}
+            return {"status": result.status, "artifact": artifact, "next_phase_event": next_phase_event}
 
         if result.status == STATUS_NEEDS_FOLLOW_UP:
             if round_number >= self.config.max_follow_up_rounds:
@@ -390,6 +403,52 @@ class MissionRuntime:
                     "reason": "Phase completed, mission still has pending phases.",
                 }
             )
+
+    def _schedule_next_phase_if_needed(self, *, mission_id: str, current_phase: str) -> dict[str, Any] | None:
+        if not self.config.auto_schedule_next_phase:
+            return None
+        next_phase = self.config.phase_transitions.get(current_phase)
+        if not next_phase:
+            return None
+
+        mission = self._mission["get_mission"]({"mission_id": mission_id})["mission"]
+        phase_status = dict(mission.get("phase_status") or {})
+        if phase_status.get(next_phase):
+            return None
+
+        role = self._role_for_phase(next_phase)
+        objective = self._phase_objective(mission)
+        self._mission["update_mission_phase"](
+            {
+                "mission_id": mission_id,
+                "phase": next_phase,
+                "status": "requested",
+                "notes": f"Scheduled automatically after phase '{current_phase}'.",
+            }
+        )
+        event_result = self._events["publish_event"](
+            {
+                "topic": TOPIC_PHASE_REQUESTED,
+                "mission_id": mission_id,
+                "producer_role": self.config.consumer_id,
+                "payload": {
+                    "phase": next_phase,
+                    "role": role,
+                    "objective": objective,
+                    "context": {
+                        "mission_title": mission.get("title"),
+                        "mission_description": mission.get("description"),
+                        "metadata": mission.get("metadata") or {},
+                        "previous_phase": current_phase,
+                    },
+                    "round": 1,
+                },
+            }
+        )
+        return event_result["event"]
+
+    def _role_for_phase(self, phase: str) -> str:
+        return self.config.phase_roles.get(phase, self.config.initial_role)
 
     def _phase_objective(self, mission: dict[str, Any]) -> str:
         title = str(mission.get("title") or "").strip()

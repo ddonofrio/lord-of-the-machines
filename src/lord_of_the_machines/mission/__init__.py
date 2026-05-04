@@ -6,6 +6,12 @@ from lord_of_the_machines.mission.contracts import (
     RoleTaskRequest,
     RoleTaskResult,
 )
+from lord_of_the_machines.mission.executors import (
+    BaseAgentRoleExecutor,
+    BaseAgentRoleExecutorConfig,
+    SoftwareDeveloperRoleExecutor,
+    SoftwareDeveloperRoleExecutorConfig,
+)
 from lord_of_the_machines.mission.meeting_tool_agent import (
     MeetingRoleExecutor,
     MeetingToolAgent,
@@ -13,6 +19,12 @@ from lord_of_the_machines.mission.meeting_tool_agent import (
 )
 from lord_of_the_machines.mission.runtime import MissionRuntime, MissionRuntimeConfig
 from lord_of_the_machines.mission.prompting import RolePromptProfile, compose_system_prompt, default_role_profile
+from lord_of_the_machines.mission.runner import (
+    DEFAULT_SELF_EVOLUTION_MISSION_DESCRIPTION,
+    DEFAULT_SELF_EVOLUTION_MISSION_TITLE,
+    MissionRunner,
+    MissionRunnerConfig,
+)
 
 __all__ = [
     "AgentAsToolBridge",
@@ -24,11 +36,19 @@ __all__ = [
     "default_role_profile",
     "MeetingRequest",
     "MeetingResult",
+    "BaseAgentRoleExecutor",
+    "BaseAgentRoleExecutorConfig",
+    "SoftwareDeveloperRoleExecutor",
+    "SoftwareDeveloperRoleExecutorConfig",
     "MeetingRoleExecutor",
     "MeetingToolAgent",
     "MeetingToolAgentConfig",
     "MissionRuntime",
     "MissionRuntimeConfig",
+    "MissionRunner",
+    "MissionRunnerConfig",
+    "DEFAULT_SELF_EVOLUTION_MISSION_TITLE",
+    "DEFAULT_SELF_EVOLUTION_MISSION_DESCRIPTION",
     "RoleTaskRequest",
     "RoleTaskResult",
 ]
