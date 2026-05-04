@@ -399,6 +399,17 @@ $env:OPENAI_API_KEY = "<your_key>"
 python -m lord_of_the_machines.mission --json
 ```
 
+By default each run writes logs to:
+
+```text
+logs/mission-run-<timestamp>.log
+```
+
+Useful flags:
+
+- `--max-follow-up-rounds <N>`: allow more rounds before a phase is blocked.
+- `--log-dir <path>`: change log output directory.
+
 ## Next Work
 
 The autonomous layer still needs to be built:

@@ -265,7 +265,11 @@ class MissionRuntime:
                     role=role,
                     summary="Follow-up round limit reached.",
                 )
-                return {"status": STATUS_BLOCKED, "reason": "follow_up_round_limit"}
+                return {
+                    "status": STATUS_BLOCKED,
+                    "reason": "follow_up_round_limit",
+                    "summary": result.summary,
+                }
 
             self._mission["update_mission_phase"](
                 {
@@ -293,7 +297,11 @@ class MissionRuntime:
                     "payload": follow_up_payload,
                 }
             )
-            return {"status": STATUS_NEEDS_FOLLOW_UP, "round": round_number + 1}
+            return {
+                "status": STATUS_NEEDS_FOLLOW_UP,
+                "round": round_number + 1,
+                "summary": result.summary,
+            }
 
         self._mission["update_mission_phase"](
             {
@@ -316,7 +324,7 @@ class MissionRuntime:
             role=role,
             summary=result.summary or f"Phase returned status '{result.status}'.",
         )
-        return {"status": result.status}
+        return {"status": result.status, "summary": result.summary}
 
     def _publish_artifact_if_present(
         self,

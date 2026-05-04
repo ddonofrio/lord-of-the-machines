@@ -23,6 +23,7 @@ from lord_of_the_machines.mission import (
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
 )
+from lord_of_the_machines.runtime import close_run_logging, configure_run_logging, current_log_path
 
 
 def create_storage_tools(state_dir: Path) -> tuple[MissionRegistryTool, EventBusTool, ArtifactRegistryTool]:
@@ -70,6 +71,7 @@ def build_default_runner(
     max_cycles: int,
     max_events_per_cycle: int,
     idle_cycles_to_stop: int,
+    max_follow_up_rounds: int,
     diagnostics_profiles: tuple[str, ...],
     diagnostics_timeout_seconds: int,
     allowed_write_prefixes: tuple[str, ...],
@@ -102,7 +104,10 @@ def build_default_runner(
             "product_director": product_director_executor,
             "software_developer": software_developer_executor,
         },
-        config=MissionRuntimeConfig(max_events_per_run=max_events_per_cycle),
+        config=MissionRuntimeConfig(
+            max_events_per_run=max_events_per_cycle,
+            max_follow_up_rounds=max_follow_up_rounds,
+        ),
     )
     return MissionRunner(
         mission_registry=mission_registry,
@@ -127,6 +132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-cycles", type=int, default=20)
     parser.add_argument("--max-events-per-cycle", type=int, default=10)
     parser.add_argument("--idle-cycles-to-stop", type=int, default=2)
+    parser.add_argument("--max-follow-up-rounds", type=int, default=3)
     parser.add_argument("--diagnostics-timeout", type=int, default=300)
     parser.add_argument("--diagnostics-profile", action="append", default=["unittest"])
     parser.add_argument(
@@ -141,57 +147,79 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--bootstrap-only", action="store_true")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--no-log", action="store_true")
+    parser.add_argument("--log-dir", type=Path, default=None)
+    parser.add_argument("--run-name", type=str, default="mission-run")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = args.repo_root.resolve()
     state_dir = (args.state_dir or (repo_root / ".state")).resolve()
     missions_file = (args.missions_file or (repo_root / "config" / "missions.json")).resolve()
-
+    log_path: str | None = None
     try:
-        if args.bootstrap_only:
-            runner = build_bootstrap_runner(
-                repo_root=repo_root,
-                state_dir=state_dir,
-                missions_file=missions_file,
-            )
-            result = runner.create_missions_from_file(missions_file, skip_existing=True)
-        else:
-            runner = build_default_runner(
-                repo_root=repo_root,
-                state_dir=state_dir,
-                missions_file=missions_file,
-                max_cycles=args.max_cycles,
-                max_events_per_cycle=args.max_events_per_cycle,
-                idle_cycles_to_stop=args.idle_cycles_to_stop,
-                diagnostics_profiles=tuple(str(item) for item in args.diagnostics_profile),
-                diagnostics_timeout_seconds=args.diagnostics_timeout,
-                allowed_write_prefixes=tuple(str(item) for item in args.allow_write_prefix),
-            )
-            result = runner.run()
-    except MissingApiKeyError as exc:
-        print(f"Missing API key: {exc}", file=sys.stderr)
-        return 2
-    except Exception as exc:
-        print(f"Mission run failed: {exc}", file=sys.stderr)
-        return 1
+        if not args.no_log:
+            resolved_log_dir = (args.log_dir or (repo_root / "logs")).resolve()
+            configure_run_logging(run_name=args.run_name, log_dir=resolved_log_dir)
+            current = current_log_path()
+            log_path = str(current) if current is not None else None
 
-    if args.json:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
-    else:
-        if args.bootstrap_only:
-            print(
-                f"Bootstrap complete. Loaded={result['loaded']} "
-                f"Created={len(result['created'])} Skipped={len(result['skipped'])}"
-            )
-        else:
-            print(f"Mission run complete. Cycles={len(result['cycles'])}")
-            for mission in result.get("final_missions", []):
-                print(
-                    f"- {mission.get('mission_id')} | "
-                    f"status={mission.get('status')} | "
-                    f"phases={mission.get('phase_status')}"
+        try:
+            if args.bootstrap_only:
+                runner = build_bootstrap_runner(
+                    repo_root=repo_root,
+                    state_dir=state_dir,
+                    missions_file=missions_file,
                 )
-    return 0
+                result = runner.create_missions_from_file(missions_file, skip_existing=True)
+            else:
+                runner = build_default_runner(
+                    repo_root=repo_root,
+                    state_dir=state_dir,
+                    missions_file=missions_file,
+                    max_cycles=args.max_cycles,
+                    max_events_per_cycle=args.max_events_per_cycle,
+                    idle_cycles_to_stop=args.idle_cycles_to_stop,
+                    max_follow_up_rounds=args.max_follow_up_rounds,
+                    diagnostics_profiles=tuple(str(item) for item in args.diagnostics_profile),
+                    diagnostics_timeout_seconds=args.diagnostics_timeout,
+                    allowed_write_prefixes=tuple(str(item) for item in args.allow_write_prefix),
+                )
+                result = runner.run()
+        except MissingApiKeyError as exc:
+            print(f"Missing API key: {exc}", file=sys.stderr)
+            return 2
+        except Exception as exc:
+            print(f"Mission run failed: {exc}", file=sys.stderr)
+            if log_path:
+                print(f"See logs: {log_path}", file=sys.stderr)
+            return 1
+
+        if log_path and isinstance(result, dict):
+            result = dict(result)
+            result["log_path"] = log_path
+
+        if args.json:
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            if args.bootstrap_only:
+                print(
+                    f"Bootstrap complete. Loaded={result['loaded']} "
+                    f"Created={len(result['created'])} Skipped={len(result['skipped'])}"
+                )
+            else:
+                print(f"Mission run complete. Cycles={len(result['cycles'])}")
+                for mission in result.get("final_missions", []):
+                    print(
+                        f"- {mission.get('mission_id')} | "
+                        f"status={mission.get('status')} | "
+                        f"phases={mission.get('phase_status')}"
+                    )
+            if log_path:
+                print(f"Logs: {log_path}")
+        return 0
+    finally:
+        if not args.no_log:
+            close_run_logging()
 
 
 if __name__ == "__main__":

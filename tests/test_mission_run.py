@@ -48,6 +48,8 @@ class MissionRunModuleTests(unittest.TestCase):
             output = json.loads(stdout.getvalue())
             self.assertEqual(output["loaded"], 1)
             self.assertEqual(len(output["created"]), 1)
+            self.assertIn("log_path", output)
+            self.assertTrue(Path(output["log_path"]).exists())
 
 
 if __name__ == "__main__":
