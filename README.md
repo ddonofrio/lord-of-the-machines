@@ -44,6 +44,9 @@ Included so far:
 - A first `agent_tools` package under `src/lord_of_the_machines/agent_tools/`.
 - `software_development_environment`, a tool package for file reads, controlled edits, search, safe command execution, diagnostics, git inspection, project-context detection, and a persisted activity journal in `logs/`.
 - `todo_list`, a tool package for per-agent TODO list files with task creation, completion/uncompletion, removal, and progress inspection.
+- `mission_registry`, a persistent mission catalog with lifecycle state, phase status tracking, and role assignments.
+- `event_bus`, a persistent event stream with consumer offsets and acknowledgements for event-driven orchestration.
+- `artifact_registry`, a versioned registry for mission artifacts and phase outputs.
 
 ## Main Configuration
 
@@ -244,6 +247,54 @@ Storage model:
 Naming safety:
 
 - `agent_id` and `list_name` use a strict slug pattern (`letters`, `numbers`, `_`, `-`, max `64` chars) to keep file paths predictable and safe.
+
+## Mission Registry Tool
+
+`mission_registry` is the source of truth for mission state.
+
+Core operations:
+
+- Create missions with title, description, metadata, and initial lifecycle status.
+- List and filter missions by status.
+- Update global mission status (`new`, `in_progress`, `blocked`, `completed`, `archived`).
+- Track per-phase status and notes.
+- Assign and unassign role ownership (`product_director`, `product_manager`, etc.).
+
+Storage model:
+
+- One JSON file per mission under a configured root.
+
+## Event Bus Tool
+
+`event_bus` provides persistent, replayable orchestration events.
+
+Core operations:
+
+- Publish events with topic, payload, mission id, and optional correlation/causation ids.
+- List events with filters by topic, mission, and sequence.
+- Consume events per consumer id from a stored ack offset.
+- Ack events by sequence or event id.
+- Inspect current consumer state.
+
+Storage model:
+
+- Append-only `events.jsonl` stream.
+- Per-consumer state files under `consumers/`.
+
+## Artifact Registry Tool
+
+`artifact_registry` stores and versions deliverables emitted by mission phases.
+
+Core operations:
+
+- Publish artifacts (phase, type, title, content, tags, metadata).
+- Query artifacts by mission, phase, type, status, and tags.
+- Retrieve artifacts by id.
+- Update artifacts with automatic version increment.
+
+Storage model:
+
+- One JSON artifact file per artifact id under `<root>/<mission_id>/`.
 
 ## Running Tests
 

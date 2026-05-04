@@ -1,3 +1,15 @@
+from lord_of_the_machines.agent_tools.artifact_registry import (
+    ArtifactRegistryTool,
+    ArtifactRegistryToolConfig,
+)
+from lord_of_the_machines.agent_tools.event_bus import (
+    EventBusTool,
+    EventBusToolConfig,
+)
+from lord_of_the_machines.agent_tools.mission_registry import (
+    MissionRegistryTool,
+    MissionRegistryToolConfig,
+)
 from lord_of_the_machines.agent_tools.software_development_environment import (
     SoftwareDevelopmentEnvironmentExecutionPolicy,
     SoftwareDevelopmentEnvironmentPermissionPolicy,
@@ -11,6 +23,12 @@ from lord_of_the_machines.agent_tools.todo_list import (
 )
 
 __all__ = [
+    "ArtifactRegistryTool",
+    "ArtifactRegistryToolConfig",
+    "EventBusTool",
+    "EventBusToolConfig",
+    "MissionRegistryTool",
+    "MissionRegistryToolConfig",
     "SoftwareDevelopmentEnvironmentExecutionPolicy",
     "SoftwareDevelopmentEnvironmentPermissionPolicy",
     "SoftwareDevelopmentEnvironmentPolicyError",
