@@ -1,0 +1,188 @@
+{
+  "provider": {
+    "provider": "openai",
+    "api_key_env": "OPENAI_API_KEY",
+    "model_env": "OPENAI_MODEL",
+    "model": "gpt-4.1"
+  },
+  "agent": {
+    "system_prompt": null,
+    "memory": [],
+    "text_verbosity": "medium",
+    "output_repair_attempts": 5,
+    "max_tool_rounds": 5
+  },
+  "reply": {
+    "tool": "reply",
+    "method": "send_message",
+    "message_argument": "message",
+    "output_language": "English"
+  },
+  "envelope": {
+    "enabled": true,
+    "version": "lord_of_the_machines.agent.v1",
+    "instructions": "You are a configurable LLM agent inside Lord of the Machines. You receive a JSON protocol envelope with clean conversation history, current memory, the current user prompt, and the conceptual tools available to you. Return only a JSON object matching the configured output contract. Use reply.send_message for messages to the caller. Use memory tools for facts that should be stored, retrieved, or forgotten.",
+    "input_fields": [
+      {"name": "protocol", "source": "protocol"},
+      {"name": "system", "source": "system"},
+      {"name": "conversation_history", "source": "conversation_history"},
+      {"name": "runtime_context", "source": "runtime_context"},
+      {"name": "user", "source": "user"},
+      {"name": "output_contract", "source": "output_contract"}
+    ],
+    "output": {
+      "type": "tool_call_list",
+      "calls_field": "calls",
+      "tool_field": "tool",
+      "method_field": "method",
+      "arguments_field": "arguments",
+      "allow_root_list": true,
+      "min_calls": 1
+    },
+    "runtime_context_extra": {}
+  },
+  "context": {
+    "mode": "local_history",
+    "context_window_tokens": 400000,
+    "safety_margin_tokens": 4096,
+    "max_history_tokens": null,
+    "max_history_messages": null,
+    "token_counter_encoding": "auto",
+    "fallback_chars_per_token": 4,
+    "context_overflow_retries": 1
+  },
+  "transport": {
+    "rate_limit_retries": 3,
+    "rate_limit_max_wait_seconds": 90.0,
+    "rate_limit_backoff_seconds": 2.0,
+    "rate_limit_tokens_per_minute": 30000,
+    "rate_limit_window_seconds": 60.0,
+    "rate_limit_safety_margin_tokens": 512
+  },
+  "prompt_cache": {
+    "enabled": true,
+    "key_prefix": "lotm",
+    "retention": "24h",
+    "fields": ["model", "instructions", "text", "tools", "envelope"]
+  },
+  "agent_tools": [
+    {
+      "name": "reply",
+      "description": "Send a natural language message back to the caller.",
+      "methods": [
+        {
+          "name": "send_message",
+          "description": "Return one message to deliver to the caller. You may call this more than once if you need to send multiple messages.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "message": {
+                "type": "string",
+                "description": "The message to deliver to the caller."
+              }
+            },
+            "required": ["message"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "memory",
+      "description": "Internal memory for storing, recalling, and forgetting useful facts. Current memory is included in the protocol envelope. If a memory is obsolete, false, duplicated, or no longer useful, you may call memory.forget. If you need recalled facts before answering, call memory.recall without reply.send_message and wait for tool results.",
+      "internal": true,
+      "methods": [
+        {
+          "name": "remember",
+          "description": "Store or update a fact in memory.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Stable key for the memory record."
+              },
+              "value": {
+                "type": "string",
+                "description": "Fact or note to remember."
+              },
+              "importance": {
+                "type": "string",
+                "description": "Optional importance label."
+              }
+            },
+            "required": ["key", "value"]
+          }
+        },
+        {
+          "name": "recall",
+          "description": "Retrieve memories by exact key or text query. If no key or query is given, returns all memory records.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Exact memory key to recall."
+              },
+              "query": {
+                "type": "string",
+                "description": "Text query to search in memory records."
+              }
+            },
+            "required": []
+          }
+        },
+        {
+          "name": "forget",
+          "description": "Remove a memory by key.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Exact memory key to forget."
+              }
+            },
+            "required": ["key"]
+          }
+        }
+      ]
+    }
+  ],
+  "response_defaults": {
+    "background": false,
+    "context_management": null,
+    "conversation": null,
+    "include": null,
+    "instructions": null,
+    "max_output_tokens": 4096,
+    "max_tool_calls": null,
+    "metadata": null,
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "prompt": null,
+    "prompt_cache_key": null,
+    "prompt_cache_retention": null,
+    "reasoning": null,
+    "safety_identifier": null,
+    "service_tier": "auto",
+    "store": true,
+    "stream": false,
+    "stream_options": null,
+    "temperature": null,
+    "text": null,
+    "tool_choice": null,
+    "tools": null,
+    "top_logprobs": null,
+    "top_p": null,
+    "truncation": "disabled",
+    "user": null,
+    "extra_headers": null,
+    "extra_query": null,
+    "extra_body": null,
+    "timeout": null
+  }
+}
