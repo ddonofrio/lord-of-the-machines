@@ -47,6 +47,10 @@ Included so far:
 - `mission_registry`, a persistent mission catalog with lifecycle state, phase status tracking, and role assignments.
 - `event_bus`, a persistent event stream with consumer offsets and acknowledgements for event-driven orchestration.
 - `artifact_registry`, a versioned registry for mission artifacts and phase outputs.
+- `mission` runtime primitives for event-driven orchestration:
+  - `MissionRuntime`: consumes mission events and drives phase execution.
+  - `AgentAsToolBridge`: exposes specialized agents as tools.
+  - `MeetingToolAgent`: a dedicated meeting coordinator agent exposed as a tool.
 
 ## Main Configuration
 
@@ -295,6 +299,23 @@ Core operations:
 Storage model:
 
 - One JSON artifact file per artifact id under `<root>/<mission_id>/`.
+
+## Mission Runtime MVP
+
+The project now includes a first event-driven mission runtime under:
+
+```text
+src/lord_of_the_machines/mission/
+```
+
+Main components:
+
+- `MissionRuntime`: seeds pending missions into `mission.phase.requested`, consumes events, dispatches role executors, updates mission phase state, and publishes completion/failure/artifact events.
+- `AgentAsToolBridge`: wraps a `BaseAgent` and exposes it as a regular tool method (`run_task`) so other agents can call it through normal tool calling.
+- `MeetingToolAgent`: wraps a specialized meeting organizer agent as a tool (`run_meeting`) and returns a structured meeting result.
+- `MeetingRoleExecutor`: adapter that lets meeting output plug directly into mission-phase execution (`RoleTaskResult`).
+
+This is an MVP foundation for the CoT-like event loop: it standardizes role execution contracts and phase transitions while still allowing flexible role-specific prompting.
 
 ## Running Tests
 

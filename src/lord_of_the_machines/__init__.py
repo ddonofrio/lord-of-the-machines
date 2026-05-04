@@ -15,6 +15,15 @@ from lord_of_the_machines.llm import (
     ToolMethodDefinition,
     get_provider_adapter,
 )
+from lord_of_the_machines.mission import (
+    AgentAsToolBridge,
+    AgentAsToolConfig,
+    MeetingRoleExecutor,
+    MeetingToolAgent,
+    MeetingToolAgentConfig,
+    MissionRuntime,
+    MissionRuntimeConfig,
+)
 
 __all__ = [
     "AgentEnvelopeSpec",
@@ -25,6 +34,13 @@ __all__ = [
     "BaseAgent",
     "BaseAgentConfig",
     "EnvelopeField",
+    "AgentAsToolBridge",
+    "AgentAsToolConfig",
+    "MeetingRoleExecutor",
+    "MeetingToolAgent",
+    "MeetingToolAgentConfig",
+    "MissionRuntime",
+    "MissionRuntimeConfig",
     "MissingApiKeyError",
     "ProviderAdapter",
     "ToolDefinition",
