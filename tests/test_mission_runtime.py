@@ -141,6 +141,50 @@ class MissionRuntimeTests(unittest.TestCase):
         self.assertEqual(first_pass["processed"][0]["outcome"]["status"], "needs_follow_up")
         self.assertEqual(second_pass["processed"][0]["outcome"]["status"], "completed")
 
+    def test_follow_up_payload_includes_feedback_and_continue_previous(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_followup_payload",
+                "title": "Follow-Up Payload",
+                "description": "Ensure follow-up context carries actionable feedback.",
+            }
+        )
+        executor = FakeRoleExecutor(
+            RoleTaskResult(
+                status="needs_follow_up",
+                summary="Acceptance checks failed.",
+                required_changes=["Add follow-up mission to config/missions.json."],
+                follow_ups=["Update missions file and rerun checks."],
+            )
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_director": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.seed_pending_missions()
+        runtime.run_once()
+
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_followup_payload"}
+        )["events"]
+        self.assertEqual(len(events), 2)
+        follow_up_payload = events[-1]["payload"]
+        self.assertEqual(follow_up_payload["round"], 2)
+        self.assertTrue(follow_up_payload["continue_previous"])
+        self.assertEqual(
+            follow_up_payload["context"]["follow_up_feedback"]["required_changes"],
+            ["Add follow-up mission to config/missions.json."],
+        )
+
+        mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_followup_payload"})[
+            "mission"
+        ]
+        self.assertIn("Required changes:", mission["phase_notes"]["product_direction"])
+
     def test_contract_violation_forces_follow_up(self) -> None:
         self.mission_registry.handlers()["create_mission"](
             {
@@ -200,6 +244,166 @@ class MissionRuntimeTests(unittest.TestCase):
         self.assertEqual(mission["phase_status"]["product_direction"], "completed")
         self.assertEqual(mission["phase_status"]["product_requirements"], "requested")
         self.assertEqual(mission["status"], "in_progress")
+
+    def test_seed_pending_missions_resumes_in_progress_phase_without_pending_event(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_resume",
+                "title": "Resume",
+                "description": "Resume from an in-progress phase",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_resume",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "Done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_resume",
+                "phase": "product_requirements",
+                "status": "in_progress",
+                "notes": "Working",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_resume",
+                "status": "in_progress",
+                "reason": "Waiting to continue.",
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={},
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        seeded = runtime.seed_pending_missions()
+
+        self.assertEqual(len(seeded["seeded_events"]), 1)
+        self.assertEqual(seeded["seeded_events"][0]["payload"]["phase"], "product_requirements")
+        self.assertEqual(seeded["seeded_events"][0]["payload"]["role"], "product_manager")
+
+    def test_seed_pending_missions_includes_resume_context_and_previous_artifact(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_resume_context",
+                "title": "Resume Context",
+                "description": "Seed should include previous artifact and phase notes.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_resume_context",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "Direction done.",
+            }
+        )
+        self.artifact_registry.handlers()["publish_artifact"](
+            {
+                "mission_id": "mission_resume_context",
+                "phase": "product_direction",
+                "artifact_type": "product_direction",
+                "title": "Direction Artifact",
+                "content": "# Direction",
+                "producer_role": "product_director",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_resume_context",
+                "phase": "product_requirements",
+                "status": "in_progress",
+                "notes": "Continue from previous run.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_resume_context",
+                "status": "in_progress",
+                "reason": "Waiting for next cycle.",
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={},
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        seeded = runtime.seed_pending_missions()
+
+        self.assertEqual(len(seeded["seeded_events"]), 1)
+        payload = seeded["seeded_events"][0]["payload"]
+        context = payload["context"]
+        self.assertEqual(context["resume_phase"], "product_requirements")
+        self.assertEqual(context["resume_phase_notes"], "Continue from previous run.")
+        self.assertEqual(context["previous_phase"], "product_direction")
+        self.assertEqual(context["previous_artifact"]["title"], "Direction Artifact")
+
+    def test_seed_pending_missions_avoids_duplicate_phase_request_events(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_no_duplicate",
+                "title": "No Duplicate",
+                "description": "Do not duplicate pending phase requests",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_no_duplicate",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "Done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_no_duplicate",
+                "phase": "product_requirements",
+                "status": "in_progress",
+                "notes": "Working",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_no_duplicate",
+                "status": "in_progress",
+                "reason": "Waiting to continue.",
+            }
+        )
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_no_duplicate",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "product_requirements",
+                    "role": "product_manager",
+                    "objective": "Continue",
+                    "round": 2,
+                },
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={},
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        seeded = runtime.seed_pending_missions()
+
+        self.assertEqual(len(seeded["seeded_events"]), 0)
 
 
 if __name__ == "__main__":

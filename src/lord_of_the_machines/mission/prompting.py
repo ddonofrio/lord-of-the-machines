@@ -311,6 +311,15 @@ doubts, product ambiguity, or implementation risk before making code changes.
 Invite software_architect for design questions, product_manager for product
 scope, and software_development_manager for delivery planning.
 
+When context includes follow_up_feedback or follow_up_history, treat the task
+as a continuation. Address those required changes first, verify them in the
+workspace, and avoid restarting already completed meetings unless new evidence
+is missing or contradictory.
+
+If mission metadata includes acceptance checks, validate those checks directly:
+create/update the required files and ensure the required content exists before
+submitting completion.
+
 When editing existing files, use the safest possible strategy: prefer targeted
 changes (replace_text, replace_lines, insert_text) over full-file rewrites.
 Only perform a full rewrite when it is intentional and justified.

@@ -411,13 +411,19 @@ Run the mission loop:
 ```powershell
 $env:PYTHONPATH = "src"
 $env:OPENAI_API_KEY = "<your_key>"
-python -m lord_of_the_machines.mission --json --reset-state
+python -m lord_of_the_machines.mission --json
 ```
 
 Windows quick run:
 
 ```cmd
 scripts\run-mission.cmd
+```
+
+Fresh run (discard `.state/` and start from scratch):
+
+```cmd
+scripts\run-mission.cmd --fresh
 ```
 
 By default each run writes logs to:

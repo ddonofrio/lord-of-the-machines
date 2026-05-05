@@ -7,6 +7,7 @@ from pathlib import Path
 DEFAULT_ALLOWED_STATUSES = (
     "new",
     "in_progress",
+    "incomplete",
     "blocked",
     "completed",
     "archived",
@@ -25,4 +26,3 @@ class MissionRegistryToolConfig:
             raise NotADirectoryError(f"Mission registry root must be a directory: {self.root_path}")
         if not self.allowed_statuses:
             raise ValueError("allowed_statuses cannot be empty.")
-

@@ -65,54 +65,62 @@ class MissionRuntime:
     _events: dict[str, Any] = field(init=False)
     _artifacts: dict[str, Any] = field(init=False)
     _logger: Any = field(init=False)
+    _seeded_phase_keys: set[tuple[str, str]] = field(init=False, default_factory=set)
 
     def __post_init__(self) -> None:
         self._mission = self.mission_registry.handlers()
         self._events = self.event_bus.handlers()
         self._artifacts = self.artifact_registry.handlers()
         self._logger = get_logger("mission.runtime")
+        self._seeded_phase_keys = set()
 
     def seed_pending_missions(self, *, limit: int | None = None) -> dict[str, Any]:
         max_limit = limit if limit is not None else self.config.max_events_per_run
+        pending_phase_requests = self._pending_phase_request_keys()
         listed = self._mission["list_missions"](
             {
-                "statuses": ["new", "in_progress"],
+                "statuses": ["new", "in_progress", "incomplete"],
                 "limit": max_limit,
             }
         )
         seeded = []
         for mission in listed["missions"]:
             mission_id = str(mission["mission_id"])
-            phase_status = dict(mission.get("phase_status") or {})
-            if phase_status.get(self.config.initial_phase):
+            phase_to_seed = self._phase_to_seed_for_mission(mission)
+            if not phase_to_seed:
                 continue
-            role = self._role_for_phase(self.config.initial_phase)
+            if (mission_id, phase_to_seed) in self._seeded_phase_keys:
+                continue
+            if (mission_id, phase_to_seed) in pending_phase_requests:
+                continue
+
+            role = self._role_for_phase(phase_to_seed)
             objective = self._phase_objective(mission)
-            self._mission["update_mission_phase"](
-                {
-                    "mission_id": mission_id,
-                    "phase": self.config.initial_phase,
-                    "status": "requested",
-                    "notes": "Seeded by runtime.",
-                }
-            )
+            phase_status = dict(mission.get("phase_status") or {})
+            existing_phase_status = str(phase_status.get(phase_to_seed) or "").strip().lower()
+            if not existing_phase_status:
+                self._mission["update_mission_phase"](
+                    {
+                        "mission_id": mission_id,
+                        "phase": phase_to_seed,
+                        "status": "requested",
+                        "notes": "Seeded by runtime.",
+                    }
+                )
             self._mission["update_mission_status"](
                 {
                     "mission_id": mission_id,
                     "status": "in_progress",
-                    "reason": f"Phase '{self.config.initial_phase}' requested.",
+                    "reason": f"Phase '{phase_to_seed}' requested.",
                 }
             )
+            round_number = self._next_round_for_seed(mission_id, phase_to_seed)
             payload = {
-                "phase": self.config.initial_phase,
+                "phase": phase_to_seed,
                 "role": role,
                 "objective": objective,
-                "context": {
-                    "mission_title": mission.get("title"),
-                    "mission_description": mission.get("description"),
-                    "metadata": mission.get("metadata") or {},
-                },
-                "round": 1,
+                "context": self._seed_context_for_phase(mission, phase_to_seed),
+                "round": round_number,
             }
             event_result = self._events["publish_event"](
                 {
@@ -123,6 +131,7 @@ class MissionRuntime:
                 }
             )
             seeded.append(event_result["event"])
+            self._seeded_phase_keys.add((mission_id, phase_to_seed))
             log_json(
                 self._logger,
                 "mission_runtime.seeded",
@@ -132,11 +141,11 @@ class MissionRuntime:
                 actor=self.config.consumer_id,
                 action="seeded phase request",
                 mission_id=mission_id,
-                phase=self.config.initial_phase,
+                phase=phase_to_seed,
                 details={
                     "role": role,
                     "objective": objective,
-                    "round": 1,
+                    "round": round_number,
                 },
             )
         return {"seeded_events": seeded}
@@ -345,31 +354,29 @@ class MissionRuntime:
             return {"status": result.status, "artifact": artifact, "next_phase_event": next_phase_event}
 
         if result.status == STATUS_NEEDS_FOLLOW_UP:
+            phase_note = self._follow_up_phase_note(result=result, round_number=round_number)
             if round_number >= self.config.max_follow_up_rounds:
                 self._mission["update_mission_phase"](
                     {
                         "mission_id": mission_id,
                         "phase": phase,
-                        "status": "blocked",
-                        "notes": "Follow-up round limit reached.",
+                        "status": "in_progress",
+                        "notes": (
+                            f"{phase_note}\n\n"
+                            "Follow-up round limit reached for this run; mission is marked as incomplete."
+                        ).strip(),
                     }
                 )
                 self._mission["update_mission_status"](
                     {
                         "mission_id": mission_id,
-                        "status": "blocked",
-                        "reason": f"Phase '{phase}' exceeded follow-up round limit.",
+                        "status": "incomplete",
+                        "reason": f"Phase '{phase}' reached follow-up round limit for this run.",
                     }
-                )
-                self._publish_phase_failed_event(
-                    mission_id=mission_id,
-                    phase=phase,
-                    role=role,
-                    summary="Follow-up round limit reached.",
                 )
                 log_json(
                     self._logger,
-                    "mission_runtime.phase_blocked.follow_up_limit",
+                    "mission_runtime.phase_incomplete.follow_up_limit",
                     {
                         "mission_id": mission_id,
                         "phase": phase,
@@ -380,7 +387,7 @@ class MissionRuntime:
                 )
                 log_timeline(
                     actor=self.config.consumer_id,
-                    action="phase blocked (follow-up limit)",
+                    action="phase incomplete (follow-up limit)",
                     mission_id=mission_id,
                     phase=phase,
                     details={
@@ -390,7 +397,7 @@ class MissionRuntime:
                     },
                 )
                 return {
-                    "status": STATUS_BLOCKED,
+                    "status": "incomplete",
                     "reason": "follow_up_round_limit",
                     "summary": result.summary,
                 }
@@ -400,16 +407,29 @@ class MissionRuntime:
                     "mission_id": mission_id,
                     "phase": phase,
                     "status": "in_progress",
-                    "notes": result.summary,
+                    "notes": phase_note,
                 }
             )
+            follow_up_context = dict(request.context) if isinstance(request.context, dict) else {}
+            follow_up_history = list(follow_up_context.get("follow_up_history") or [])
+            follow_up_feedback = {
+                "round": round_number,
+                "summary": result.summary,
+                "required_changes": list(result.required_changes),
+                "unresolved_questions": list(result.unresolved_questions),
+                "follow_ups": list(result.follow_ups),
+            }
+            follow_up_history.append(follow_up_feedback)
+            follow_up_context["follow_up_history"] = follow_up_history[-3:]
+            follow_up_context["follow_up_feedback"] = follow_up_feedback
             follow_up_payload = {
                 "phase": phase,
                 "role": role,
                 "objective": request.objective,
-                "context": request.context,
+                "context": follow_up_context,
                 "constraints": request.constraints,
                 "max_rounds": request.max_rounds,
+                "continue_previous": True,
                 "metadata": request.metadata,
                 "round": round_number + 1,
             }
@@ -646,6 +666,132 @@ class MissionRuntime:
 
     def _role_for_phase(self, phase: str) -> str:
         return self.config.phase_roles.get(phase, self.config.initial_role)
+
+    def _seed_context_for_phase(self, mission: dict[str, Any], phase: str) -> dict[str, Any]:
+        phase_status = dict(mission.get("phase_status") or {})
+        phase_notes = dict(mission.get("phase_notes") or {})
+        context: dict[str, Any] = {
+            "mission_title": mission.get("title"),
+            "mission_description": mission.get("description"),
+            "metadata": mission.get("metadata") or {},
+            "phase_status": phase_status,
+            "phase_notes": phase_notes,
+            "resume_phase": phase,
+            "resume_phase_status": phase_status.get(phase),
+            "resume_phase_notes": phase_notes.get(phase),
+            "resume_guidance": (
+                "This is a continuation of an in-progress phase. Reuse existing workspace outputs and "
+                "focus on unresolved required changes instead of restarting already completed work."
+            ),
+        }
+        mission_id = str(mission.get("mission_id") or "")
+        previous_phase = self._nearest_completed_previous_phase(phase, phase_status)
+        if mission_id and previous_phase:
+            artifact = self._latest_artifact_for_phase(mission_id, previous_phase)
+            artifact_context = self._artifact_context(artifact)
+            if artifact_context:
+                context["previous_phase"] = previous_phase
+                context["previous_artifact"] = artifact_context
+        return context
+
+    def _nearest_completed_previous_phase(self, phase: str, phase_status: dict[str, Any]) -> str | None:
+        ordered_phases = list(self.config.phase_roles.keys())
+        if phase not in ordered_phases:
+            return None
+        phase_index = ordered_phases.index(phase)
+        for index in range(phase_index - 1, -1, -1):
+            candidate_phase = ordered_phases[index]
+            candidate_status = str(phase_status.get(candidate_phase) or "").strip().lower()
+            if candidate_status == "completed":
+                return candidate_phase
+        return None
+
+    def _latest_artifact_for_phase(self, mission_id: str, phase: str) -> dict[str, Any] | None:
+        listed = self._artifacts["list_artifacts"]({"mission_id": mission_id, "phase": phase})
+        artifacts = list(listed.get("artifacts") or [])
+        if not artifacts:
+            return None
+
+        def sort_key(item: dict[str, Any]) -> tuple[str, str]:
+            return (str(item.get("updated_at") or ""), str(item.get("created_at") or ""))
+
+        artifacts.sort(key=sort_key)
+        return artifacts[-1]
+
+    def _next_round_for_seed(self, mission_id: str, phase: str) -> int:
+        listed = self._events["list_events"](
+            {
+                "topics": [TOPIC_PHASE_REQUESTED],
+                "mission_id": mission_id,
+            }
+        )
+        max_round = 0
+        for event in listed.get("events") or []:
+            payload = event.get("payload") or {}
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("phase") or "") != phase:
+                continue
+            round_value = payload.get("round")
+            if isinstance(round_value, int) and not isinstance(round_value, bool):
+                max_round = max(max_round, round_value)
+        return max_round + 1 if max_round > 0 else 1
+
+    def _follow_up_phase_note(self, *, result: RoleTaskResult, round_number: int) -> str:
+        lines = [f"Follow-up round {round_number}: {result.summary}".strip()]
+        if result.required_changes:
+            lines.append("Required changes: " + "; ".join(result.required_changes))
+        if result.follow_ups:
+            lines.append("Follow-ups: " + "; ".join(result.follow_ups))
+        if result.unresolved_questions:
+            lines.append("Open questions: " + "; ".join(result.unresolved_questions))
+        return "\n".join(lines)
+
+    def _phase_to_seed_for_mission(self, mission: dict[str, Any]) -> str | None:
+        phase_status = dict(mission.get("phase_status") or {})
+        initial_status = str(phase_status.get(self.config.initial_phase) or "").strip().lower()
+        if not initial_status:
+            return self.config.initial_phase
+
+        mission_status = str(mission.get("status") or "").strip().lower()
+        if mission_status not in {"in_progress", "incomplete"}:
+            return None
+
+        ordered_phases = list(self.config.phase_roles.keys())
+        active_statuses = {"requested", "in_progress", "needs_follow_up"}
+        for phase in ordered_phases:
+            status = str(phase_status.get(phase) or "").strip().lower()
+            if status in active_statuses:
+                return phase
+
+        all_previous_completed = True
+        for phase in ordered_phases:
+            status = str(phase_status.get(phase) or "").strip().lower()
+            if not status:
+                if all_previous_completed:
+                    return phase
+                return None
+            if status != "completed":
+                all_previous_completed = False
+        return None
+
+    def _pending_phase_request_keys(self) -> set[tuple[str, str]]:
+        state = self._events["get_consumer_state"]({"consumer_id": self.config.consumer_id})["consumer_state"]
+        last_acked_sequence = int(state.get("last_acked_sequence") or 0)
+        listed = self._events["list_events"](
+            {
+                "topics": [TOPIC_PHASE_REQUESTED],
+                "after_sequence": last_acked_sequence,
+            }
+        )
+        keys: set[tuple[str, str]] = set()
+        for event in listed.get("events") or []:
+            mission_id = event.get("mission_id")
+            payload = event.get("payload") or {}
+            phase = payload.get("phase") if isinstance(payload, dict) else None
+            if isinstance(mission_id, str) and mission_id and isinstance(phase, str) and phase:
+                keys.add((mission_id, phase))
+        return keys
 
     def _phase_objective(self, mission: dict[str, Any]) -> str:
         title = str(mission.get("title") or "").strip()
