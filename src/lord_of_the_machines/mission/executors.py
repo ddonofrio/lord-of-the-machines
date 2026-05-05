@@ -11,6 +11,10 @@ from lord_of_the_machines.agent_tools import (
     SoftwareDevelopmentEnvironmentToolConfig,
 )
 from lord_of_the_machines.llm import BaseAgent
+from lord_of_the_machines.mission.acceptance import (
+    MissionAcceptanceChecks,
+    evaluate_mission_acceptance_checks,
+)
 from lord_of_the_machines.mission.agent_as_tool import AgentAsToolBridge, AgentAsToolConfig
 from lord_of_the_machines.mission.contracts import RoleTaskRequest, RoleTaskResult
 from lord_of_the_machines.mission.events import STATUS_BLOCKED, STATUS_COMPLETED, STATUS_NEEDS_FOLLOW_UP
@@ -242,6 +246,31 @@ class SoftwareDeveloperRoleExecutor:
                 ],
                 metadata={"changes": changes, "diagnostics": diagnostics},
             )
+
+        acceptance_metadata = request.context.get("metadata") if isinstance(request.context, dict) else None
+        try:
+            acceptance_checks = MissionAcceptanceChecks.from_metadata(acceptance_metadata)
+        except ValueError as exc:
+            return RoleTaskResult(
+                status=STATUS_BLOCKED,
+                summary=f"Invalid mission acceptance configuration: {exc}",
+                follow_ups=["Fix mission metadata.acceptance_checks and rerun."],
+                metadata={"changes": changes, "diagnostics": diagnostics},
+            )
+        if acceptance_checks is not None:
+            acceptance_errors = evaluate_mission_acceptance_checks(
+                checks=acceptance_checks,
+                workspace_root=self.config.workspace_root,
+                mission_id=request.mission_id,
+            )
+            if acceptance_errors:
+                return RoleTaskResult(
+                    status=STATUS_NEEDS_FOLLOW_UP,
+                    summary="Mission acceptance checks are not satisfied yet.",
+                    required_changes=list(acceptance_errors),
+                    follow_ups=list(acceptance_errors),
+                    metadata={"changes": changes, "diagnostics": diagnostics},
+                )
 
         if not result.artifact_content:
             result.artifact_type = "implementation_report"

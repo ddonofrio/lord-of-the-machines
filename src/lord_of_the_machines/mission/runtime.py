@@ -215,6 +215,36 @@ class MissionRuntime:
 
         raw_result = executor.execute_task(request)
         result = raw_result if isinstance(raw_result, RoleTaskResult) else RoleTaskResult.from_mapping(raw_result)
+        contract_errors = result.contract_errors()
+        if contract_errors:
+            log_json(
+                self._logger,
+                "mission_runtime.role_result.contract_violation",
+                {
+                    "mission_id": mission_id,
+                    "phase": phase,
+                    "role": role,
+                    "status": result.status,
+                    "errors": contract_errors,
+                },
+            )
+            log_timeline(
+                actor=self.config.consumer_id,
+                action="role result rejected (contract violation)",
+                mission_id=mission_id,
+                phase=phase,
+                details={
+                    "role": role,
+                    "errors": contract_errors,
+                },
+            )
+            result = RoleTaskResult(
+                status=STATUS_NEEDS_FOLLOW_UP,
+                summary="Role result did not satisfy the required output contract.",
+                required_changes=list(contract_errors),
+                follow_ups=list(contract_errors),
+                metadata={"contract_errors": list(contract_errors)},
+            )
         usage = result.metadata.get("agent_usage") if isinstance(result.metadata, dict) else None
         cost = result.metadata.get("agent_cost") if isinstance(result.metadata, dict) else None
         log_json(

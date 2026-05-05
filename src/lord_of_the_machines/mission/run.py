@@ -188,6 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[
             "docs/",
+            "config/",
             "README.md",
             "src/lord_of_the_machines/mission/",
             "tests/",

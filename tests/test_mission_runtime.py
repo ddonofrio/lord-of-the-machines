@@ -141,6 +141,32 @@ class MissionRuntimeTests(unittest.TestCase):
         self.assertEqual(first_pass["processed"][0]["outcome"]["status"], "needs_follow_up")
         self.assertEqual(second_pass["processed"][0]["outcome"]["status"], "completed")
 
+    def test_contract_violation_forces_follow_up(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_contract",
+                "title": "Contract",
+                "description": "Ensure role output contract enforcement",
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={
+                "product_director": FakeRoleExecutor(RoleTaskResult(status="completed", summary=""))
+            },
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.seed_pending_missions()
+        first_pass = runtime.run_once()
+
+        self.assertEqual(first_pass["processed"][0]["outcome"]["status"], "needs_follow_up")
+        follow_up_events = self.event_bus.handlers()["list_events"]({"topics": ["mission.phase.requested"]})["events"]
+        self.assertEqual(len(follow_up_events), 2)
+        self.assertEqual(follow_up_events[-1]["payload"]["round"], 2)
+
     def test_completed_phase_schedules_next_phase_when_transition_exists(self) -> None:
         self.mission_registry.handlers()["create_mission"](
             {

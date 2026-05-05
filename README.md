@@ -366,17 +366,25 @@ config/missions.json
 Supported shape:
 
 ```json
-{
-  "missions": [
-    {
-      "mission_id": "my_mission_id",
-      "title": "Mission Title",
-      "description": "Mission objective",
-      "metadata": {}
-    }
-  ]
-}
-```
+  {
+    "missions": [
+      {
+        "mission_id": "my_mission_id",
+        "title": "Mission Title",
+        "description": "Mission objective",
+        "metadata": {
+          "acceptance_checks": {
+            "documentation_file": "docs/output.md",
+            "required_role_mentions": ["product_director", "software_developer"],
+            "follow_up_mission_file": "config/missions.json",
+            "minimum_missions_in_follow_up_file": 2,
+            "require_distinct_follow_up_mission": true
+          }
+        }
+      }
+    ]
+  }
+  ```
 
 `MissionRunner` loads this list and creates any missing missions before entering execution cycles.
 

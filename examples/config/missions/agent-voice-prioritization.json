@@ -35,6 +35,19 @@
           "Include a final recommendation section with the top priority and why it won.",
           "Include a proposed mission_id, title, description, and acceptance criteria for the follow-up mission."
         ],
+        "acceptance_checks": {
+          "documentation_file": "docs/voice-of-the-agents.md",
+          "required_role_mentions": [
+            "product_director",
+            "product_manager",
+            "software_architect",
+            "software_development_manager",
+            "software_developer"
+          ],
+          "follow_up_mission_file": "config/missions.json",
+          "minimum_missions_in_follow_up_file": 2,
+          "require_distinct_follow_up_mission": true
+        },
         "acceptance_criteria": [
           "Every active role available in the runtime has a dedicated documented contribution.",
           "docs/voice-of-the-agents.md exists and contains role notes plus a prioritized decision.",

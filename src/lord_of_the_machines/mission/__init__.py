@@ -1,5 +1,9 @@
 from lord_of_the_machines.mission.agent_as_tool import AgentAsToolBridge, AgentAsToolConfig
 from lord_of_the_machines.mission.agent_factory import RoleAgentFactory, RoleAgentFactoryConfig
+from lord_of_the_machines.mission.acceptance import (
+    MissionAcceptanceChecks,
+    evaluate_mission_acceptance_checks,
+)
 from lord_of_the_machines.mission.contracts import (
     MeetingRequest,
     MeetingResult,
@@ -39,6 +43,8 @@ __all__ = [
     "AgentAsToolConfig",
     "RoleAgentFactory",
     "RoleAgentFactoryConfig",
+    "MissionAcceptanceChecks",
+    "evaluate_mission_acceptance_checks",
     "RolePromptProfile",
     "compose_system_prompt",
     "default_role_profile",

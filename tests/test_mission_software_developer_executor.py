@@ -21,6 +21,8 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
         self.root = Path(self._tmpdir.name)
+        (self.root / "docs").mkdir(parents=True)
+        (self.root / "config").mkdir(parents=True)
         (self.root / "src" / "lord_of_the_machines" / "mission").mkdir(parents=True)
         (self.root / "tests").mkdir(parents=True)
         (self.root / "tests" / "__init__.py").write_text("", encoding="utf-8")
@@ -35,6 +37,21 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
             phase="implementation",
             context={"target": "mission module"},
         )
+
+    def _voice_acceptance_checks(self) -> dict[str, object]:
+        return {
+            "documentation_file": "docs/voice-of-the-agents.md",
+            "required_role_mentions": [
+                "product_director",
+                "product_manager",
+                "software_architect",
+                "software_development_manager",
+                "software_developer",
+            ],
+            "follow_up_mission_file": "config/missions.json",
+            "minimum_missions_in_follow_up_file": 2,
+            "require_distinct_follow_up_mission": True,
+        }
 
     def test_task_start_details_include_previous_artifact_handoff(self) -> None:
         request = RoleTaskRequest(
@@ -240,6 +257,128 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
 
         self.assertEqual(result.status, "needs_follow_up")
         self.assertIn("diagnostics failed", result.summary.lower())
+
+    def test_returns_follow_up_when_acceptance_checks_fail(self) -> None:
+        (self.root / "tests" / "test_ok.py").write_text(
+            "import unittest\n\n"
+            "class Smoke(unittest.TestCase):\n"
+            "    def test_ok(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        (self.root / "config" / "missions.json").write_text(
+            '{"missions":[{"mission_id":"mvp_agent_voice_prioritization","title":"Current","description":"Current"}]}',
+            encoding="utf-8",
+        )
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "software_development_environment",
+                        "method": "write_file",
+                        "arguments": {
+                            "path": "docs/voice-of-the-agents.md",
+                            "content": (
+                                "# Voice of the Agents\n\n"
+                                "Contributors: product_director, product_manager, software_architect.\n"
+                            ),
+                        },
+                    },
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {"status": "completed", "summary": "Draft done."},
+                    },
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+        executor = SoftwareDeveloperRoleExecutor(
+            agent,
+            config=SoftwareDeveloperRoleExecutorConfig(
+                workspace_root=self.root,
+                diagnostics_profiles=("unittest",),
+                diagnostics_timeout_seconds=60,
+                allowed_write_prefixes=("docs/", "config/", "src/", "tests/"),
+            ),
+        )
+        request = RoleTaskRequest(
+            objective="Collect role input and produce the final document.",
+            mission_id="mvp_agent_voice_prioritization",
+            phase="implementation",
+            context={"metadata": {"acceptance_checks": self._voice_acceptance_checks()}},
+        )
+
+        result = executor.execute_task(request)
+
+        self.assertEqual(result.status, "needs_follow_up")
+        self.assertIn("acceptance checks", result.summary.lower())
+        self.assertTrue(result.required_changes)
+
+    def test_acceptance_checks_pass_when_document_and_follow_up_mission_exist(self) -> None:
+        (self.root / "tests" / "test_ok.py").write_text(
+            "import unittest\n\n"
+            "class Smoke(unittest.TestCase):\n"
+            "    def test_ok(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "software_development_environment",
+                        "method": "write_file",
+                        "arguments": {
+                            "path": "docs/voice-of-the-agents.md",
+                            "content": (
+                                "# Voice of the Agents\n\n"
+                                "Participants: product_director, product_manager, software_architect, "
+                                "software_development_manager, software_developer.\n"
+                            ),
+                        },
+                    },
+                    {
+                        "tool": "software_development_environment",
+                        "method": "write_file",
+                        "arguments": {
+                            "path": "config/missions.json",
+                            "content": (
+                                '{"missions":['
+                                '{"mission_id":"mvp_agent_voice_prioritization","title":"Current","description":"Current"},'
+                                '{"mission_id":"mvp_qa_lane","title":"Add QA role","description":"Add QA role and workflow"}'
+                                ']}'
+                            ),
+                        },
+                    },
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {"status": "completed", "summary": "Finalized vote and added follow-up mission."},
+                    },
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+        executor = SoftwareDeveloperRoleExecutor(
+            agent,
+            config=SoftwareDeveloperRoleExecutorConfig(
+                workspace_root=self.root,
+                diagnostics_profiles=("unittest",),
+                diagnostics_timeout_seconds=60,
+                allowed_write_prefixes=("docs/", "config/", "src/", "tests/"),
+            ),
+        )
+        request = RoleTaskRequest(
+            objective="Collect role input and produce the final document.",
+            mission_id="mvp_agent_voice_prioritization",
+            phase="implementation",
+            context={"metadata": {"acceptance_checks": self._voice_acceptance_checks()}},
+        )
+
+        result = executor.execute_task(request)
+
+        self.assertEqual(result.status, "completed")
 
 
 if __name__ == "__main__":

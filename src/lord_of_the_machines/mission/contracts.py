@@ -5,7 +5,10 @@ from typing import Any, Self
 
 from lord_of_the_machines.mission.events import (
     ALLOWED_ROLE_RESULT_STATUSES,
+    STATUS_BLOCKED,
     STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_NEEDS_FOLLOW_UP,
 )
 
 
@@ -118,6 +121,23 @@ class RoleTaskResult(MappingModel):
     unresolved_questions: list[str] = field(default_factory=list)
     follow_ups: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def contract_errors(self) -> list[str]:
+        errors: list[str] = []
+        if self.status == STATUS_COMPLETED:
+            if not self.summary.strip():
+                errors.append("completed results must include a non-empty summary.")
+            if self.artifact_content is not None and not self.artifact_type:
+                errors.append("artifact_type is required when artifact_content is provided.")
+            if self.artifact_content is not None and not self.artifact_title:
+                errors.append("artifact_title is required when artifact_content is provided.")
+            if self.artifact_content is not None and not self.artifact_format.strip():
+                errors.append("artifact_format must be non-empty when artifact_content is provided.")
+
+        if self.status in {STATUS_NEEDS_FOLLOW_UP, STATUS_BLOCKED, STATUS_FAILED}:
+            if not self.summary.strip():
+                errors.append(f"{self.status} results must include a non-empty summary.")
+        return errors
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any] | None) -> Self:
