@@ -4,6 +4,10 @@ Lord of the Machines is a new lab for building an autonomous AI system that can 
 
 This first cut focuses on getting the foundation right: a generic, configurable, and tested LLM agent core, plus the first serious tool package for software development work. There is no autonomous mission server or self-programming loop yet; those layers should be built on top of this core.
 
+## 📚 Technical Architecture Baseline
+
+For a comprehensive explanation of Lord of the Machines' current technical architecture, runtime flow, and extension points, see [Technical Architecture Baseline](docs/technical-architecture-baseline.md).
+
 ## Current Status
 
 Included so far:
