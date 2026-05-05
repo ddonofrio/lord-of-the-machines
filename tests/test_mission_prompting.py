@@ -82,6 +82,11 @@ class MissionPromptingTests(unittest.TestCase):
         self.assertIn("# Golden Rules", sdm_prompt)
         self.assertIn("# Software Development Manager role", sdm_prompt)
         self.assertIn("# Secondary objectives", sdm_prompt)
+        self.assertIn("If software_development_environment is available", sdm_prompt)
+        self.assertIn("project_context", sdm_prompt)
+        self.assertIn("list_tree", sdm_prompt)
+        self.assertIn("read_file/read_files", sdm_prompt)
+        self.assertIn("Do not plan from mission text alone", sdm_prompt)
         self.assertNotIn("# Developer Standards", sdm_prompt)
 
         dev_prompt = (factory.create("software_developer", client=FakeClient(), rate_limiter=None).get_system_prompt() or "")

@@ -109,6 +109,10 @@ def build_default_runner(
         software_architect_agent,
         workspace_root=repo_root,
     )
+    install_read_only_software_workspace_tool(
+        software_development_manager_agent,
+        workspace_root=repo_root,
+    )
 
     product_director_executor = BaseAgentRoleExecutor(
         product_director_agent,
