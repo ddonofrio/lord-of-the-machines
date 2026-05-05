@@ -1,0 +1,33 @@
+{
+  "missions": [
+    {
+      "mission_id": "mvp_technical_architecture_baseline",
+      "title": "Technical Architecture Baseline Documentation (First MVP Test, Already Executed)",
+      "description": "Historical first MVP mission: create a technical architecture baseline document for Lord of the Machines and link it from README so agents can use it as shared architecture context.",
+      "metadata": {
+        "historical_record": true,
+        "execution_state": "already_executed",
+        "executed_on": "2026-05-05",
+        "goal": "Architecture clarity for autonomous agents",
+        "deliverables": [
+          {
+            "type": "documentation",
+            "path": "docs/technical-architecture-baseline.md",
+            "description": "Architecture overview, runtime flow, tools, mission lifecycle, and extension points."
+          }
+        ],
+        "required_readme_updates": [
+          {
+            "path": "README.md",
+            "description": "Add a clear section that links to docs/technical-architecture-baseline.md."
+          }
+        ],
+        "acceptance_criteria": [
+          "Document describes current architecture and mission runtime flow with concrete module references.",
+          "README includes a visible link to the architecture document.",
+          "Result is useful for new role agents to understand the system quickly."
+        ]
+      }
+    }
+  ]
+}

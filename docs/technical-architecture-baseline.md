@@ -6,7 +6,7 @@ Lord of the Machines is an autonomous AI system designed to execute complex soft
 ## Architectural Layers
 
 - **Agent Runtime Core**: The foundation is the `BaseAgent`, a configurable orchestrator responsible for protocol compliance, role management, tool execution, and interaction between LLM and tools. Main components:
-    - `src/lord_of_the_machines/base_agent.py`
+    - `src/lord_of_the_machines/llm/base_agent.py`
     - Manages the input/output protocol, memory, pagination, and tool-calling logic.
 
 - **Tool System**: Implemented under `src/lord_of_the_machines/agent_tools/` and as separate tool modules (e.g., `software_development_environment`, `todo_list`, `mission_registry`, `meeting` tool). Tools provide concrete actions like file edits, environment inspections, diagnostics, and coordination.
@@ -40,11 +40,11 @@ Lord of the Machines is an autonomous AI system designed to execute complex soft
 - **External integrations** can be handled through additional `providers/` or modifying the transport and envelope layers.
 
 ## Key Files and Modules
-- `src/lord_of_the_machines/base_agent.py` – Core runtime agent
+- `src/lord_of_the_machines/llm/base_agent.py` – Core runtime agent
 - `src/lord_of_the_machines/agent_tools/` – Tool package implementations
 - `src/lord_of_the_machines/mission/` – Mission runtime/event/registry logic
-    - `mission.py`, `artifact_registry.py`, `event_bus.py`, `mission_registry.py`
-- `src/lord_of_the_machines/history.py`, `memory.py`, `pagination.py` – Conversation, memory, and long-output handling
+    - `runtime.py`, `runner.py`, `executors.py`, `agent_as_tool.py`, `meeting_tool_agent.py`
+- `src/lord_of_the_machines/llm/history.py`, `memory.py`, `pagination.py` – Conversation, memory, and long-output handling
 - `README.md` – Entry point with documentation links
 - `docs/technical-architecture-baseline.md` – This document
 
