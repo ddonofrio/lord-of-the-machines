@@ -4,10 +4,6 @@ Lord of the Machines is a new lab for building an autonomous AI system that can 
 
 This first cut focuses on getting the foundation right: a generic, configurable, and tested LLM agent core, plus the first serious tool package for software development work. There is no autonomous mission server or self-programming loop yet; those layers should be built on top of this core.
 
-## Technical Architecture
-
-For an in-depth technical architecture overview, including runtime flow, tools, mission lifecycle, and extension points, see [docs/technical-architecture-baseline.md](docs/technical-architecture-baseline.md).
-
 ## Current Status
 
 Included so far:
@@ -21,7 +17,7 @@ Included so far:
   - `transport.py`: OpenAI Responses API integration, retries, rate-limit handling, and verbosity fallback.
   - `history.py`: local history and context budgeting.
   - `parser.py`: output parsing and protocol validation.
-  - `tools.py` and `memory.py`: tool registration/execution and internal memory.
+  - `tools.py`, `memory.py`, and `pagination.py`: tool registration/execution, internal memory, and long-output continuation.
   - `prompt_cache.py`: `prompt_cache_key` generation.
   - `rate_limit.py`, `tokens.py`, `schema.py`, `replies.py`, and `errors.py`: focused low-level primitives.
 - Configuration separated by responsibility:
@@ -39,6 +35,7 @@ Included so far:
 - Typed `ToolDefinition` and `ToolMethodDefinition` contracts as the internal and public tool model.
 - Strict config loading for `BaseAgent`: only the current structured config schema is accepted.
 - Internal memory compatible with `memory.remember`, `memory.recall`, and `memory.forget`.
+- Internal pagination compatible with `pagination.append_page`, `pagination.read_pages`, and `pagination.reset` for long replies or long structured fields.
 - Protocol repair when the model returns invalid JSON or an unsupported tool/method combination.
 - Tool execution with tool-result feedback loops until the model produces a final answer.
 - Clean local history that stores real conversational messages rather than envelopes or repair prompts.
@@ -159,6 +156,12 @@ In native mode, the agent still keeps the same internal conceptual tool model, s
 Tools are no longer treated as loose dictionaries inside the runtime API surface. `BaseAgent.add_tool(...)` and `BaseAgent.list_tools()` now operate on typed `ToolDefinition` and `ToolMethodDefinition` objects.
 
 JSON config files still describe tools as JSON objects, but that mapping is normalized at load time. Once the runtime is alive, the agent works with typed tool contracts end to end and only serializes them when building prompt envelopes or provider-native tool payloads.
+
+## Long Output Pagination
+
+`BaseAgent` installs an internal `pagination` tool for long outputs. The model can call `pagination.append_page` with `status="continue"` while more content remains, then `status="stop"` on the final page. When the paginated target is a normal reply, `BaseAgent.query(...)` assembles the pages and returns one final message to the caller.
+
+Structured tool results can also refer to assembled content with `pagination://<target>`, for example `pagination://artifact_content`. `query_structured_tool_result(...)` resolves those references before returning the structured dictionary, so role executors receive full fields rather than continuation markers.
 
 ## Strict Config Schema
 
@@ -327,22 +330,24 @@ src/lord_of_the_machines/mission/
 Main components:
 
 - `MissionRuntime`: seeds pending missions into `mission.phase.requested`, consumes events, dispatches role executors, updates mission phase state, and publishes completion/failure/artifact events.
-- `MissionRuntimeConfig.phase_transitions`: supports automatic next-phase scheduling (default MVP flow: `product_direction -> implementation`).
+- `MissionRuntimeConfig.phase_transitions`: supports next-phase scheduling after a role finishes. The default MVP flow is `product_direction -> product_requirements -> technical_design -> development_plan -> implementation`.
 - `AgentAsToolBridge`: wraps a `BaseAgent` and exposes it as a regular tool method (`run_task`) so other agents can call it through normal tool calling.
-- `MeetingToolAgent`: wraps a specialized meeting organizer agent as a tool (`run_meeting`) and returns a structured meeting result.
+- `MeetingToolAgent`: wraps a specialized meeting organizer agent as a tool (`run_meeting`), exposes `list_available_roles`, and can call participant role agents for focused meeting contributions.
 - `MeetingRoleExecutor`: adapter that lets meeting output plug directly into mission-phase execution (`RoleTaskResult`).
 - `prompting.py` and `RoleAgentFactory`: stable, in-repo prompt composition for role agents. Prompts are built from:
   - global `Golden Rules` shared by all agents,
+  - every Markdown file in `config/agent_global_rules/`, loaded in filename order,
   - role charter prompt,
   - role-specific DNA rulesets.
-- `MissionRunner`: loop controller to create missions, seed events, and execute runtime cycles until idle.
 - `MissionRunner`: loop controller to load missions from JSON, create them in the registry, seed events, and execute runtime cycles until idle.
 - `SoftwareDeveloperRoleExecutor`: implementation executor with:
   - `software_development_environment` tool installed on the role agent,
   - scoped write-prefix guardrails,
-  - required diagnostics execution before completion.
+  - required diagnostics execution before completion,
+  - idempotent completion when inspection proves no file changes are needed.
 
-Prompt composition is intentionally sourced from versioned runtime code modules, not from `.temp/`.
+Prompt composition is intentionally sourced from versioned runtime code modules
+and versioned config prompts, not from `.temp/`.
 
 This is an MVP foundation for the CoT-like event loop: it standardizes role execution contracts and phase transitions while still allowing flexible role-specific prompting.
 
@@ -370,12 +375,6 @@ Supported shape:
 ```
 
 `MissionRunner` loads this list and creates any missing missions before entering execution cycles.
-
-The first seeded mission in `config/missions.json` asks the system to:
-
-- create a technical architecture document for the project,
-- and add a link to that document in `README.md`,
-- so new agents can quickly understand the architecture baseline.
 
 ## Running Tests
 

@@ -20,6 +20,7 @@ from lord_of_the_machines.mission import (
     MissionRunnerConfig,
     MissionRuntime,
     MissionRuntimeConfig,
+    MeetingToolAgent,
     RoleAgentFactory,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
@@ -82,12 +83,42 @@ def build_default_runner(
     mission_registry, event_bus, artifact_registry = create_storage_tools(state_dir)
     factory = RoleAgentFactory()
 
-    product_director_agent = factory.create("product_director", max_tool_rounds=8)
-    software_developer_agent = factory.create("software_developer", max_tool_rounds=12)
+    product_director_agent = factory.create("product_director", max_tool_rounds=10)
+    product_manager_agent = factory.create("product_manager", max_tool_rounds=10)
+    software_architect_agent = factory.create("software_architect", max_tool_rounds=10)
+    software_development_manager_agent = factory.create("software_development_manager", max_tool_rounds=10)
+    software_developer_agent = factory.create("software_developer", max_tool_rounds=14)
+    role_agents = {
+        "product_director": product_director_agent,
+        "product_manager": product_manager_agent,
+        "software_architect": software_architect_agent,
+        "software_development_manager": software_development_manager_agent,
+        "software_developer": software_developer_agent,
+    }
+
+    meeting_organizer_agent = factory.create("meeting_organizer", max_tool_rounds=12)
+    meeting_tool = MeetingToolAgent(
+        meeting_organizer_agent,
+        participant_agents=role_agents,
+    )
+    for agent in role_agents.values():
+        meeting_tool.install(agent)
 
     product_director_executor = BaseAgentRoleExecutor(
         product_director_agent,
         config=BaseAgentRoleExecutorConfig(role_name="product_director"),
+    )
+    product_manager_executor = BaseAgentRoleExecutor(
+        product_manager_agent,
+        config=BaseAgentRoleExecutorConfig(role_name="product_manager"),
+    )
+    software_architect_executor = BaseAgentRoleExecutor(
+        software_architect_agent,
+        config=BaseAgentRoleExecutorConfig(role_name="software_architect"),
+    )
+    software_development_manager_executor = BaseAgentRoleExecutor(
+        software_development_manager_agent,
+        config=BaseAgentRoleExecutorConfig(role_name="software_development_manager"),
     )
     software_developer_executor = SoftwareDeveloperRoleExecutor(
         software_developer_agent,
@@ -105,6 +136,9 @@ def build_default_runner(
         artifact_registry=artifact_registry,
         role_executors={
             "product_director": product_director_executor,
+            "product_manager": product_manager_executor,
+            "software_architect": software_architect_executor,
+            "software_development_manager": software_development_manager_executor,
             "software_developer": software_developer_executor,
         },
         config=MissionRuntimeConfig(

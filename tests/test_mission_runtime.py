@@ -146,7 +146,7 @@ class MissionRuntimeTests(unittest.TestCase):
             {
                 "mission_id": "mission_delta",
                 "title": "Delta",
-                "description": "From product direction to implementation",
+                "description": "From product direction to product requirements",
             }
         )
         runtime = MissionRuntime(
@@ -167,11 +167,12 @@ class MissionRuntimeTests(unittest.TestCase):
         outcome = pass_one["processed"][0]["outcome"]
         self.assertEqual(outcome["status"], "completed")
         self.assertIsNotNone(outcome["next_phase_event"])
-        self.assertEqual(outcome["next_phase_event"]["payload"]["phase"], "implementation")
+        self.assertEqual(outcome["next_phase_event"]["payload"]["phase"], "product_requirements")
+        self.assertEqual(outcome["next_phase_event"]["payload"]["role"], "product_manager")
 
         mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_delta"})["mission"]
         self.assertEqual(mission["phase_status"]["product_direction"], "completed")
-        self.assertEqual(mission["phase_status"]["implementation"], "requested")
+        self.assertEqual(mission["phase_status"]["product_requirements"], "requested")
         self.assertEqual(mission["status"], "in_progress")
 
 

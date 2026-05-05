@@ -41,6 +41,17 @@ class SoftwareDevelopmentEnvironmentToolTests(unittest.TestCase):
     def test_definition_uses_new_tool_name(self) -> None:
         self.assertEqual(self.tool.definition().name, "software_development_environment")
 
+    def test_line_range_schemas_are_one_based(self) -> None:
+        methods = {method.name: method for method in self.tool.definition().methods}
+
+        read_schema = methods["read_file"].arguments_schema["properties"]
+        replace_schema = methods["replace_lines"].arguments_schema["properties"]
+
+        self.assertEqual(read_schema["start_line"]["minimum"], 1)
+        self.assertEqual(read_schema["end_line"]["minimum"], 1)
+        self.assertEqual(replace_schema["start_line"]["minimum"], 1)
+        self.assertEqual(replace_schema["end_line"]["minimum"], 1)
+
     def test_list_tree_ignores_generated_directories(self) -> None:
         result = self.tool.handlers()["list_tree"]({})
         paths = {entry["path"] for entry in result["entries"]}

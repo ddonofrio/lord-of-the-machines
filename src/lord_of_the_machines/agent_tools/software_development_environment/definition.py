@@ -56,28 +56,47 @@ def build_definition(tool_name: str) -> ToolDefinition:
             ),
             ToolMethodDefinition(
                 name="read_file",
-                description="Read a text file fully or by line range, including metadata and a content hash.",
+                description=(
+                    "Read a text file fully or by 1-based inclusive line range, including metadata "
+                    "and a content hash."
+                ),
                 arguments_schema={
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
                         "path": path_property,
-                        "start_line": {"type": "integer"},
-                        "end_line": {"type": "integer"},
+                        "start_line": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based inclusive start line.",
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based inclusive end line.",
+                        },
                     },
                     "required": ["path"],
                 },
             ),
             ToolMethodDefinition(
                 name="read_files",
-                description="Read several text files in one call.",
+                description="Read several text files in one call using optional 1-based inclusive line ranges.",
                 arguments_schema={
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
                         "paths": {"type": "array", "items": {"type": "string"}},
-                        "start_line": {"type": "integer"},
-                        "end_line": {"type": "integer"},
+                        "start_line": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based inclusive start line applied to each file.",
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based inclusive end line applied to each file.",
+                        },
                     },
                     "required": ["paths"],
                 },
@@ -149,14 +168,22 @@ def build_definition(tool_name: str) -> ToolDefinition:
             ),
             ToolMethodDefinition(
                 name="replace_lines",
-                description="Replace an inclusive line range in a file.",
+                description="Replace a 1-based inclusive line range in a file.",
                 arguments_schema={
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
                         "path": path_property,
-                        "start_line": {"type": "integer"},
-                        "end_line": {"type": "integer"},
+                        "start_line": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based inclusive start line.",
+                        },
+                        "end_line": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "1-based inclusive end line.",
+                        },
                         "replacement": {"type": "string"},
                         "expected_sha256": {"type": "string"},
                         "allow_large_rewrite": {"type": "boolean"},

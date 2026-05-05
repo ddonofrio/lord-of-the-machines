@@ -37,6 +37,7 @@ from lord_of_the_machines.mission import (
     MissionRunnerConfig,
     compose_system_prompt,
     default_role_profile,
+    load_agent_global_rules,
 )
 
 __all__ = [
@@ -69,6 +70,7 @@ __all__ = [
     "MissionRunnerConfig",
     "compose_system_prompt",
     "default_role_profile",
+    "load_agent_global_rules",
     "MissingApiKeyError",
     "ProviderAdapter",
     "ToolDefinition",

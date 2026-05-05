@@ -77,7 +77,7 @@ class SoftwareDeveloperRoleExecutorConfig:
         "src/lord_of_the_machines/mission/",
         "tests/",
     )
-    require_changed_files: bool = True
+    require_changed_files: bool = False
 
 
 class SoftwareDeveloperRoleExecutor:

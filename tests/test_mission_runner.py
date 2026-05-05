@@ -79,13 +79,18 @@ class MissionRunnerTests(unittest.TestCase):
         final = {mission["mission_id"]: mission for mission in outcome["final_missions"]}
         self.assertEqual(final["m_runner_1"]["status"], "completed")
 
-    def test_runner_progresses_two_phase_default_workflow(self) -> None:
+    def test_runner_progresses_default_mvp_workflow(self) -> None:
         runtime = MissionRuntime(
             mission_registry=self.mission_registry,
             event_bus=self.event_bus,
             artifact_registry=self.artifact_registry,
             role_executors={
                 "product_director": StaticExecutor(RoleTaskResult(status="completed", summary="direction done")),
+                "product_manager": StaticExecutor(RoleTaskResult(status="completed", summary="requirements done")),
+                "software_architect": StaticExecutor(RoleTaskResult(status="completed", summary="design done")),
+                "software_development_manager": StaticExecutor(
+                    RoleTaskResult(status="completed", summary="plan done")
+                ),
                 "software_developer": StaticExecutor(RoleTaskResult(status="completed", summary="implementation done")),
             },
             config=MissionRuntimeConfig(max_events_per_run=5),
@@ -98,7 +103,7 @@ class MissionRunnerTests(unittest.TestCase):
         runner.create_mission(
             mission_id="m_runner_2",
             title="Two Phase Mission",
-            description="Run direction then implementation",
+            description="Run the full MVP workflow",
         )
 
         outcome = runner.run()
@@ -107,6 +112,9 @@ class MissionRunnerTests(unittest.TestCase):
         self.assertEqual(final["m_runner_2"]["status"], "completed")
         phase_status = final["m_runner_2"]["phase_status"]
         self.assertEqual(phase_status["product_direction"], "completed")
+        self.assertEqual(phase_status["product_requirements"], "completed")
+        self.assertEqual(phase_status["technical_design"], "completed")
+        self.assertEqual(phase_status["development_plan"], "completed")
         self.assertEqual(phase_status["implementation"], "completed")
 
     def test_runner_loads_mission_list_from_json_file(self) -> None:

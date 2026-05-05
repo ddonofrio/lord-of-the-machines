@@ -18,7 +18,12 @@ from lord_of_the_machines.mission.meeting_tool_agent import (
     MeetingToolAgentConfig,
 )
 from lord_of_the_machines.mission.runtime import MissionRuntime, MissionRuntimeConfig
-from lord_of_the_machines.mission.prompting import RolePromptProfile, compose_system_prompt, default_role_profile
+from lord_of_the_machines.mission.prompting import (
+    RolePromptProfile,
+    compose_system_prompt,
+    default_role_profile,
+    load_agent_global_rules,
+)
 from lord_of_the_machines.mission.runner import (
     DEFAULT_MISSIONS_FILE_PATH,
     MISSIONS_FILE_ENV_VAR,
@@ -35,6 +40,7 @@ __all__ = [
     "RolePromptProfile",
     "compose_system_prompt",
     "default_role_profile",
+    "load_agent_global_rules",
     "MeetingRequest",
     "MeetingResult",
     "BaseAgentRoleExecutor",

@@ -76,6 +76,45 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
         self.assertTrue(result.artifact_content)
         self.assertIn("Implementation Report", result.artifact_content or "")
 
+    def test_completed_execution_can_be_idempotent_when_no_changes_are_needed(self) -> None:
+        (self.root / "tests" / "test_ok.py").write_text(
+            "import unittest\n\n"
+            "class Smoke(unittest.TestCase):\n"
+            "    def test_ok(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "completed",
+                            "summary": "Verified that the requested deliverable already exists.",
+                            "metadata": {"no_changes_required": True},
+                        },
+                    },
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+        executor = SoftwareDeveloperRoleExecutor(
+            agent,
+            config=SoftwareDeveloperRoleExecutorConfig(
+                workspace_root=self.root,
+                diagnostics_profiles=("unittest",),
+                diagnostics_timeout_seconds=60,
+            ),
+        )
+
+        result = executor.execute_task(self._make_request())
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.artifact_content)
+        self.assertIn("- None", result.artifact_content or "")
+
     def test_blocks_when_changes_outside_allowed_prefixes(self) -> None:
         (self.root / "tests" / "test_ok.py").write_text(
             "import unittest\n\n"

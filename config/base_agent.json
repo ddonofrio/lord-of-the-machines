@@ -94,6 +94,68 @@
       ]
     },
     {
+      "name": "pagination",
+      "description": "Emit long answers or long structured fields in pages. Use append_page with status='continue' while more content remains, then status='stop' for the final page. The full assembled content can be referenced in any later string field as pagination://<target>, for example pagination://artifact_content.",
+      "internal": true,
+      "methods": [
+        {
+          "name": "append_page",
+          "description": "Append one page of content to a named pagination target. Use status='continue' to request another model turn, and status='stop' when the target is complete.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Stable target name for this paginated content. Use simple names such as default, reply, artifact_content, or meeting_summary."
+              },
+              "content": {
+                "type": "string",
+                "description": "The next page of content to append."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["continue", "stop"],
+                "description": "Use continue when more pages are needed; use stop on the final page."
+              }
+            },
+            "required": ["content", "status"]
+          }
+        },
+        {
+          "name": "read_pages",
+          "description": "Inspect accumulated pagination targets for the current query.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "type": "string"
+              },
+              "include_content": {
+                "type": "boolean"
+              }
+            },
+            "required": []
+          }
+        },
+        {
+          "name": "reset",
+          "description": "Clear one pagination target, or all targets when target is omitted.",
+          "arguments_schema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": []
+          }
+        }
+      ]
+    },
+    {
       "name": "memory",
       "description": "Internal memory for storing, recalling, and forgetting useful facts. Current memory is included in the protocol envelope. If a memory is obsolete, false, duplicated, or no longer useful, you may call memory.forget. If you need recalled facts before answering, call memory.recall without reply.send_message and wait for tool results.",
       "internal": true,

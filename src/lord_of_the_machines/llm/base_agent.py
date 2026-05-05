@@ -20,6 +20,15 @@ from lord_of_the_machines.llm.log_views import (
     tool_result_for_log,
 )
 from lord_of_the_machines.llm.memory import forget, recall, remember
+from lord_of_the_machines.llm.pagination import (
+    PAGINATION_STATUSES,
+    PAGINATION_TOOL_NAME,
+    assembled_page_content,
+    normalize_pagination_target,
+    pagination_ref,
+    pagination_tool_definition,
+    resolve_pagination_references,
+)
 from lord_of_the_machines.llm.payload import AgentPayloadBuilder
 from lord_of_the_machines.llm.parser import AgentOutputParser
 from lord_of_the_machines.llm.prompt_cache import PromptCacheManager
@@ -56,6 +65,7 @@ class BaseAgent:
         self.last_response_id: str | None = None
         self.last_query_usage: dict[str, int] | None = None
         self.last_query_cost: dict[str, Any] | None = None
+        self._pagination_pages: dict[str, list[str]] = {}
         self._logger = get_logger("agents.base_agent")
         self._provider = get_provider_adapter(self.config.model.provider)
         if not self._provider.supports_tool_calling_mode(self.config.tool_calling.mode):
@@ -201,6 +211,7 @@ class BaseAgent:
     ) -> AgentReply:
         self.last_query_usage = None
         self.last_query_cost = None
+        self._pagination_pages = {}
         log_json(
             self._logger,
             "base_agent.query.start",
@@ -252,17 +263,46 @@ class BaseAgent:
             tool_results = self._tools.execute(reply.tool_calls)
             all_tool_results.extend(tool_results)
             reply.tool_results = list(all_tool_results)
-            disabled_tool_names.update(single_round_tool_names(self.config.agent_tools, reply.tool_calls))
+            pagination_continue_requested = self._pagination_continue_requested(tool_results)
+            if not pagination_continue_requested:
+                disabled_tool_names.update(single_round_tool_names(self.config.agent_tools, reply.tool_calls))
+            self._resolve_reply_pagination_references(reply)
 
-            if tool_results and return_after_tool_results and should_return_after_tool_results(tool_results, return_tool_names):
+            if (
+                tool_results
+                and return_after_tool_results
+                and not pagination_continue_requested
+                and should_return_after_tool_results(tool_results, return_tool_names)
+            ):
+                self._finalize_query_costs(usage_accumulator, usage_seen)
+                self._history.record_turn(message, reply)
                 log_json(
                     self._logger,
                     "base_agent.query.return_after_tool_results",
-                    {"agent_id": self._log_id(), "reply": reply_for_log(reply)},
+                    {
+                        "agent_id": self._log_id(),
+                        "reply": reply_for_log(reply),
+                        "history_size": len(self._history.get()),
+                    },
                 )
                 return reply
 
-            if reply.messages or not tool_results:
+            if self._should_finish_paginated_reply(tool_results):
+                reply.text = self._paginated_reply_text()
+                self._finalize_query_costs(usage_accumulator, usage_seen)
+                self._history.record_turn(message, reply)
+                log_json(
+                    self._logger,
+                    "base_agent.query.finish_paginated_reply",
+                    {
+                        "agent_id": self._log_id(),
+                        "reply": reply_for_log(reply),
+                        "history_size": len(self._history.get()),
+                    },
+                )
+                return reply
+
+            if (reply.messages and not pagination_continue_requested) or not tool_results:
                 self._finalize_query_costs(usage_accumulator, usage_seen)
                 self._history.record_turn(message, reply)
                 log_json(
@@ -331,7 +371,7 @@ class BaseAgent:
             if not tool_result.ok:
                 return None, reply
             if isinstance(tool_result.result, dict):
-                return copy.deepcopy(tool_result.result), reply
+                return copy.deepcopy(self._resolve_pagination_references(tool_result.result)), reply
             return None, reply
         return None, reply
 
@@ -559,9 +599,14 @@ class BaseAgent:
         return reply
 
     def _install_builtin_tool_handlers(self) -> None:
+        if not any(tool.name == PAGINATION_TOOL_NAME for tool in self.config.agent_tools):
+            self.config.agent_tools.append(pagination_tool_definition())
         self.register_tool_handler("memory", "remember", self._memory_remember)
         self.register_tool_handler("memory", "recall", self._memory_recall)
         self.register_tool_handler("memory", "forget", self._memory_forget)
+        self.register_tool_handler(PAGINATION_TOOL_NAME, "append_page", self._pagination_append_page)
+        self.register_tool_handler(PAGINATION_TOOL_NAME, "read_pages", self._pagination_read_pages)
+        self.register_tool_handler(PAGINATION_TOOL_NAME, "reset", self._pagination_reset)
 
     def _memory_remember(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self.config.memory, result = remember(self.config.memory, arguments)
@@ -573,6 +618,120 @@ class BaseAgent:
     def _memory_forget(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self.config.memory, result = forget(self.config.memory, arguments)
         return result
+
+    def _pagination_append_page(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        target = normalize_pagination_target(arguments.get("target"))
+        content = arguments.get("content")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string.")
+
+        status = str(arguments.get("status") or "").strip().lower()
+        if status not in PAGINATION_STATUSES:
+            raise ValueError("status must be 'continue' or 'stop'.")
+
+        pages = self._pagination_pages.setdefault(target, [])
+        pages.append(content)
+        total_chars = len(assembled_page_content(self._pagination_pages, target))
+        if status == "continue":
+            instruction = "Continue with the next pagination.append_page call for this target."
+        else:
+            instruction = (
+                f"Target complete. Use {pagination_ref(target)} in a later string field "
+                "or finish the query now."
+            )
+        return {
+            "target": target,
+            "status": status,
+            "page_number": len(pages),
+            "page_chars": len(content),
+            "total_chars": total_chars,
+            "content_ref": pagination_ref(target),
+            "instruction": instruction,
+        }
+
+    def _pagination_read_pages(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        raw_target = arguments.get("target")
+        include_content = bool(arguments.get("include_content", False))
+        targets = (
+            [normalize_pagination_target(raw_target)]
+            if raw_target is not None
+            else sorted(self._pagination_pages)
+        )
+        result_targets = []
+        for target in targets:
+            pages = self._pagination_pages.get(target, [])
+            target_result: dict[str, Any] = {
+                "target": target,
+                "page_count": len(pages),
+                "total_chars": len(assembled_page_content(self._pagination_pages, target)),
+                "content_ref": pagination_ref(target),
+            }
+            if include_content:
+                target_result["content"] = assembled_page_content(self._pagination_pages, target)
+            result_targets.append(target_result)
+        return {"targets": result_targets}
+
+    def _pagination_reset(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        raw_target = arguments.get("target")
+        if raw_target is None:
+            cleared = sorted(self._pagination_pages)
+            self._pagination_pages.clear()
+            return {"cleared": cleared}
+
+        target = normalize_pagination_target(raw_target)
+        existed = target in self._pagination_pages
+        self._pagination_pages.pop(target, None)
+        return {"cleared": [target] if existed else []}
+
+    def _resolve_pagination_references(self, value: Any) -> Any:
+        return resolve_pagination_references(value, self._pagination_pages)
+
+    def _resolve_reply_pagination_references(self, reply: AgentReply) -> None:
+        for tool_call in reply.tool_calls:
+            if tool_call.tool != self.config.reply.tool or tool_call.method != self.config.reply.method:
+                continue
+            message = tool_call.arguments.get(self.config.reply.message_argument)
+            if isinstance(message, str):
+                tool_call.arguments[self.config.reply.message_argument] = self._resolve_pagination_references(message)
+
+    def _should_finish_paginated_reply(self, tool_results: list[AgentToolResult]) -> bool:
+        if not tool_results:
+            return False
+        if self._pagination_continue_requested(tool_results):
+            return False
+        if any(tool_result.tool != PAGINATION_TOOL_NAME for tool_result in tool_results):
+            return False
+        return any(
+            isinstance(tool_result.result, dict) and tool_result.result.get("status") == "stop"
+            for tool_result in tool_results
+        )
+
+    def _pagination_continue_requested(self, tool_results: list[AgentToolResult]) -> bool:
+        incomplete_targets = set()
+        completed_targets = set()
+        for tool_result in tool_results:
+            if tool_result.tool != PAGINATION_TOOL_NAME or not isinstance(tool_result.result, dict):
+                continue
+            target = str(tool_result.result.get("target") or "")
+            status = tool_result.result.get("status")
+            if status == "continue":
+                incomplete_targets.add(target)
+            elif status == "stop":
+                completed_targets.add(target)
+        return bool(incomplete_targets - completed_targets)
+
+    def _paginated_reply_text(self) -> str:
+        if "reply" in self._pagination_pages:
+            return assembled_page_content(self._pagination_pages, "reply")
+        if "default" in self._pagination_pages:
+            return assembled_page_content(self._pagination_pages, "default")
+        if len(self._pagination_pages) == 1:
+            target = next(iter(self._pagination_pages))
+            return assembled_page_content(self._pagination_pages, target)
+        return "\n\n".join(
+            f"## {target}\n\n{assembled_page_content(self._pagination_pages, target)}"
+            for target in sorted(self._pagination_pages)
+        )
 
     def _request_token_estimate(self, payload: dict[str, Any]) -> dict[str, Any]:
         return estimate_response_tokens(payload, self._token_counter)

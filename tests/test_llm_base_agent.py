@@ -20,7 +20,10 @@ from lord_of_the_machines.llm import (
 from tests.helpers.fake_openai import (
     FakeClient,
     FakeContextWindowError,
+    FakeResponse,
     FakeRateLimitError,
+    FakeUsage,
+    FakeUsageDetails,
     FakeUnsupportedVerbosityError,
 )
 from tests.helpers.outputs import custom_reply_output, reply_output, tool_output
@@ -326,6 +329,7 @@ class BaseAgentTests(unittest.TestCase):
 
         self.assertTrue(all(isinstance(tool, ToolDefinition) for tool in listed_tools))
         self.assertTrue(any(tool.name == "reply" for tool in listed_tools))
+        self.assertTrue(any(tool.name == "pagination" for tool in listed_tools))
 
         with self.assertRaises(TypeError):
             agent.add_tool(
@@ -352,6 +356,196 @@ class BaseAgentTests(unittest.TestCase):
             )
         )
         self.assertTrue(any(tool.name == "typed_tool" for tool in agent.list_tools()))
+
+    def test_pagination_tool_can_finish_reply_from_pages(self) -> None:
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "reply",
+                            "content": "part one ",
+                            "status": "continue",
+                        },
+                    }
+                ),
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "reply",
+                            "content": "part two",
+                            "status": "stop",
+                        },
+                    }
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None, max_tool_rounds=3)
+
+        reply = agent.query("write a long answer")
+
+        self.assertEqual(reply.message, "part one part two")
+        self.assertEqual(len(client.responses.calls), 2)
+        self.assertEqual(
+            agent.get_history(),
+            [
+                {"role": "user", "content": "write a long answer"},
+                {"role": "assistant", "content": "part one part two"},
+            ],
+        )
+
+    def test_pagination_continue_takes_precedence_over_early_reply(self) -> None:
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "reply",
+                            "content": "first page ",
+                            "status": "continue",
+                        },
+                    },
+                    {
+                        "tool": "reply",
+                        "method": "send_message",
+                        "arguments": {"message": "pagination://reply"},
+                    },
+                ),
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "reply",
+                            "content": "final page",
+                            "status": "stop",
+                        },
+                    }
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None, max_tool_rounds=3)
+
+        reply = agent.query("write a long answer")
+
+        self.assertEqual(reply.message, "first page final page")
+        self.assertEqual(len(client.responses.calls), 2)
+
+    def test_structured_tool_result_resolves_paginated_reference(self) -> None:
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "artifact_content",
+                            "content": "# Title\n",
+                            "status": "continue",
+                        },
+                    }
+                ),
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "artifact_content",
+                            "content": "Body\n",
+                            "status": "stop",
+                        },
+                    },
+                    {
+                        "tool": "result",
+                        "method": "submit",
+                        "arguments": {"artifact_content": "pagination://artifact_content"},
+                    },
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None, max_tool_rounds=3)
+        agent.add_tool(
+            ToolDefinition(
+                name="result",
+                single_round=True,
+                methods=[
+                    ToolMethodDefinition(
+                        name="submit",
+                        arguments_schema={
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"artifact_content": {"type": "string"}},
+                            "required": ["artifact_content"],
+                        },
+                    )
+                ],
+            ),
+            handlers={"submit": lambda arguments: dict(arguments)},
+        )
+
+        result, _reply = agent.query_structured_tool_result(
+            "return a long structured artifact",
+            tool_name="result",
+            method_name="submit",
+        )
+
+        self.assertEqual(result, {"artifact_content": "# Title\nBody\n"})
+
+    def test_structured_tool_result_finalizes_usage_and_cost(self) -> None:
+        client = FakeClient(
+            [
+                FakeResponse(
+                    tool_output(
+                        {
+                            "tool": "result",
+                            "method": "submit",
+                            "arguments": {"value": "done"},
+                        }
+                    ),
+                    usage=FakeUsage(
+                        input_tokens=1000,
+                        output_tokens=100,
+                        total_tokens=1100,
+                        input_tokens_details=FakeUsageDetails(cached_tokens=200),
+                    ),
+                )
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+        agent.add_tool(
+            ToolDefinition(
+                name="result",
+                single_round=True,
+                methods=[
+                    ToolMethodDefinition(
+                        name="submit",
+                        arguments_schema={
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"value": {"type": "string"}},
+                            "required": ["value"],
+                        },
+                    )
+                ],
+            ),
+            handlers={"submit": lambda arguments: dict(arguments)},
+        )
+
+        result, _reply = agent.query_structured_tool_result(
+            "return a structured reply",
+            tool_name="result",
+            method_name="submit",
+        )
+
+        self.assertEqual(result, {"value": "done"})
+        self.assertEqual(agent.last_query_usage["total_tokens"], 1100)
+        self.assertIsNotNone(agent.last_query_cost)
 
 
 if __name__ == "__main__":

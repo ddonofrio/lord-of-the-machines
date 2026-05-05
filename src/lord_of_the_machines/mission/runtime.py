@@ -37,12 +37,18 @@ class MissionRuntimeConfig:
     phase_roles: dict[str, str] = field(
         default_factory=lambda: {
             "product_direction": "product_director",
+            "product_requirements": "product_manager",
+            "technical_design": "software_architect",
+            "development_plan": "software_development_manager",
             "implementation": "software_developer",
         }
     )
     phase_transitions: dict[str, str] = field(
         default_factory=lambda: {
-            "product_direction": "implementation",
+            "product_direction": "product_requirements",
+            "product_requirements": "technical_design",
+            "technical_design": "development_plan",
+            "development_plan": "implementation",
         }
     )
     auto_schedule_next_phase: bool = True
@@ -269,12 +275,17 @@ class MissionRuntime:
                 role=role,
                 summary=result.summary,
             )
-            next_phase_event = self._schedule_next_phase_if_needed(mission_id=mission_id, current_phase=phase)
             artifact = self._publish_artifact_if_present(
                 mission_id=mission_id,
                 phase=phase,
                 role=role,
                 result=result,
+            )
+            next_phase_event = self._schedule_next_phase_if_needed(
+                mission_id=mission_id,
+                current_phase=phase,
+                completed_result=result,
+                artifact=artifact,
             )
             self._update_mission_lifecycle_on_completion(mission_id)
             log_json(
@@ -539,7 +550,14 @@ class MissionRuntime:
                 }
             )
 
-    def _schedule_next_phase_if_needed(self, *, mission_id: str, current_phase: str) -> dict[str, Any] | None:
+    def _schedule_next_phase_if_needed(
+        self,
+        *,
+        mission_id: str,
+        current_phase: str,
+        completed_result: RoleTaskResult,
+        artifact: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
         if not self.config.auto_schedule_next_phase:
             return None
         next_phase = self.config.phase_transitions.get(current_phase)
@@ -575,12 +593,26 @@ class MissionRuntime:
                         "mission_description": mission.get("description"),
                         "metadata": mission.get("metadata") or {},
                         "previous_phase": current_phase,
+                        "previous_phase_summary": completed_result.summary,
+                        "previous_artifact": self._artifact_context(artifact),
                     },
                     "round": 1,
                 },
             }
         )
         return event_result["event"]
+
+    def _artifact_context(self, artifact: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not artifact:
+            return None
+        return {
+            "artifact_id": artifact.get("artifact_id"),
+            "artifact_type": artifact.get("artifact_type"),
+            "title": artifact.get("title"),
+            "format": artifact.get("format"),
+            "content": artifact.get("content"),
+            "producer_role": artifact.get("producer_role"),
+        }
 
     def _role_for_phase(self, phase: str) -> str:
         return self.config.phase_roles.get(phase, self.config.initial_role)

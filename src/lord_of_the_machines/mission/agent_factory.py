@@ -16,6 +16,8 @@ from lord_of_the_machines.mission.prompting import (
 class RoleAgentFactoryConfig:
     config_path: str | Path | None = None
     include_golden_rules: bool = True
+    include_global_rules: bool = True
+    global_rules_dir: str | Path | None = None
     base_overrides: dict[str, Any] = field(default_factory=dict)
     role_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     role_profile_overrides: dict[str, RolePromptProfile] = field(default_factory=dict)
@@ -38,6 +40,8 @@ class RoleAgentFactory:
         system_prompt = compose_system_prompt(
             profile,
             include_golden_rules=self.config.include_golden_rules,
+            include_global_rules=self.config.include_global_rules,
+            global_rules_dir=self.config.global_rules_dir,
             extra_rulesets=self.config.extra_dna_rulesets_by_role.get(role_name, ()),
         )
         merged_overrides = {

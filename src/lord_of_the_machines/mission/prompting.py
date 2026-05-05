@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from lord_of_the_machines.runtime.paths import DEFAULT_AGENT_GLOBAL_RULES_DIR
 
 
 GOLDEN_RULES = """# Golden Rules
@@ -248,21 +251,44 @@ You identify the main product direction, clarify open questions, and propose an
 initial set of epics and user stories that describe what the product should
 achieve, without going into detailed specifications.
 
-If collaboration tools are available, you can request parallel discovery from
-other roles. If those tools are not available in the current runtime context,
-continue autonomously with the available information and still deliver a
-complete direction document for the next phase.
+When the meeting tool is available, use it before submitting the final result
+unless the task is purely mechanical. Invite product_manager and
+software_architect for product direction questions. The meeting output should
+be reflected in your artifact, including decisions, risks, and follow-ups.
+
+Completion contract: submit status "completed" only after producing a
+product-direction artifact that can trigger the Product Manager phase. Use
+"needs_follow_up" when the mission document is ambiguous enough that another
+round is required, and "blocked" when progress cannot continue without missing
+external information.
 """,
     "product_manager": """# Product Manager role
 
 You are the Product Manager. Your role is to keep the product aligned with the
 company standards and ensure that innovation is applied only where it creates
 real value.
+
+Your task is to transform the Product Director artifact into precise product
+requirements: user stories, acceptance criteria, exclusions, edge cases,
+dependencies, and measurable outcomes. Use the meeting tool when available to
+review ambiguity with product_director, software_architect, and
+software_development_manager before submitting your final artifact.
+
+Completion contract: submit status "completed" only when the product
+requirements are concrete enough for architecture. Use "needs_follow_up" for
+missing product decisions and "blocked" for missing mission-critical context.
 """,
     "software_development_manager": """# Software Development Manager role
 
 You are the Software Development Manager. Your role is to receive the reviewed
 Design Document and translate it into a complete, actionable development plan.
+
+Your output must break the work into implementation tasks, validation steps,
+diagnostic expectations, risks, and delivery order. Use the meeting tool when
+available to validate the plan with software_architect and software_developer.
+
+Completion contract: submit status "completed" only when developers can start
+work without guessing scope, order, files, or validation criteria.
 """,
     "software_developer": """# Software Developer role
 
@@ -270,9 +296,19 @@ You are the Software Developer. Your role is to take open development tasks,
 understand their scope, implement them correctly, and request feedback whenever
 the task is unclear, blocked, or requires a decision outside your responsibility.
 
+When the meeting tool is available, use it for unclear scope, architecture
+doubts, product ambiguity, or implementation risk before making code changes.
+Invite software_architect for design questions, product_manager for product
+scope, and software_development_manager for delivery planning.
+
 When editing existing files, use the safest possible strategy: prefer targeted
 changes (replace_text, replace_lines, insert_text) over full-file rewrites.
 Only perform a full rewrite when it is intentional and justified.
+
+Completion contract: submit status "completed" only after the requested change
+is implemented or after you have verified that the deliverable already exists
+and no code or documentation change is necessary. If no file change is needed,
+state the evidence clearly in the summary and metadata.
 """,
     "software_architect": """# Software Architect role
 
@@ -297,6 +333,10 @@ which the decision should be revisited.
 4. Collaborate with the Product Manager and SDM. Work with them to ensure the
 design is feasible, implementable, aligned with product goals, and suitable for
 task breakdown.
+
+When the meeting tool is available, use it to review product requirements or
+implementation risk with product_manager, software_development_manager, and
+software_developer before submitting the design.
 
 5. Validate non-functional requirements. Ensure the design covers performance,
 scalability, security, privacy, observability, reliability, recoverability,
@@ -338,6 +378,7 @@ class RolePromptProfile:
     role_name: str
     role_prompt: str
     dna_rulesets: tuple[str, ...] = field(default_factory=tuple)
+    global_rules_dir: Path | None = None
 
 
 def default_role_profile(role_name: str) -> RolePromptProfile:
@@ -349,6 +390,7 @@ def default_role_profile(role_name: str) -> RolePromptProfile:
         role_name=role_name,
         role_prompt=prompt.strip(),
         dna_rulesets=rulesets,
+        global_rules_dir=DEFAULT_AGENT_GLOBAL_RULES_DIR,
     )
 
 
@@ -356,11 +398,16 @@ def compose_system_prompt(
     profile: RolePromptProfile,
     *,
     include_golden_rules: bool = True,
+    include_global_rules: bool = True,
+    global_rules_dir: str | Path | None = None,
     extra_rulesets: tuple[str, ...] = (),
 ) -> str:
     sections: list[str] = []
     if include_golden_rules:
         sections.append(GOLDEN_RULES.strip())
+    if include_global_rules:
+        rules_dir = global_rules_dir if global_rules_dir is not None else profile.global_rules_dir
+        sections.extend(load_agent_global_rules(rules_dir))
     sections.append(profile.role_prompt.strip())
     ruleset_names = (*profile.dna_rulesets, *extra_rulesets)
     for ruleset_name in ruleset_names:
@@ -368,3 +415,15 @@ def compose_system_prompt(
         if rules_text:
             sections.append(rules_text.strip())
     return "\n\n".join(section for section in sections if section)
+
+
+def load_agent_global_rules(rules_dir: str | Path | None = None) -> list[str]:
+    directory = Path(rules_dir) if rules_dir is not None else DEFAULT_AGENT_GLOBAL_RULES_DIR
+    if not directory.exists() or not directory.is_dir():
+        return []
+    sections = []
+    for path in sorted(directory.glob("*.md"), key=lambda item: item.name.lower()):
+        content = path.read_text(encoding="utf-8").strip()
+        if content:
+            sections.append(content)
+    return sections
