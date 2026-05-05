@@ -14,6 +14,7 @@ from lord_of_the_machines.llm import BaseAgent
 from lord_of_the_machines.mission.agent_as_tool import AgentAsToolBridge, AgentAsToolConfig
 from lord_of_the_machines.mission.contracts import RoleTaskRequest, RoleTaskResult
 from lord_of_the_machines.mission.events import STATUS_BLOCKED, STATUS_COMPLETED, STATUS_NEEDS_FOLLOW_UP
+from lord_of_the_machines.runtime import log_timeline
 
 
 @dataclass(slots=True)
@@ -25,6 +26,8 @@ class BaseAgentRoleExecutorConfig:
 
 class BaseAgentRoleExecutor:
     def __init__(self, agent: BaseAgent, *, config: BaseAgentRoleExecutorConfig) -> None:
+        self._agent = agent
+        self._config = config
         tool_name = config.tool_name or f"{config.role_name}_agent"
         bridge_config = AgentAsToolConfig(
             role_name=config.role_name,
@@ -34,7 +37,34 @@ class BaseAgentRoleExecutor:
         self._bridge = AgentAsToolBridge(agent, config=bridge_config)
 
     def execute_task(self, request: RoleTaskRequest) -> RoleTaskResult:
-        return self._bridge.execute_task(request)
+        log_timeline(
+            actor=self._config.role_name,
+            action="started task",
+            mission_id=request.mission_id,
+            phase=request.phase,
+            details={
+                "objective": request.objective,
+                "constraints_count": len(request.constraints),
+            },
+        )
+        result = self._bridge.execute_task(request)
+        result.metadata = dict(result.metadata)
+        usage = self._agent.last_query_usage
+        cost = self._agent.last_query_cost
+        if usage:
+            result.metadata["agent_usage"] = dict(usage)
+        if cost:
+            result.metadata["agent_cost"] = dict(cost)
+        log_timeline(
+            actor=self._config.role_name,
+            action=f"finished task ({result.status})",
+            mission_id=request.mission_id,
+            phase=request.phase,
+            details={"summary": result.summary},
+            usage=usage,
+            cost=cost,
+        )
+        return result
 
 
 @dataclass(slots=True)
@@ -103,6 +133,9 @@ class SoftwareDeveloperRoleExecutor:
                 *request.constraints,
                 f"Allowed write prefixes: {', '.join(self.config.allowed_write_prefixes)}",
                 f"Required diagnostics profiles after edits: {', '.join(self.config.diagnostics_profiles)}",
+                "Use the safest edit method possible: prefer replace_text/replace_lines/insert_text on existing files.",
+                "Do not overwrite entire existing files unless intentionally rewriting all content.",
+                "If you must do a large rewrite, set allow_large_rewrite=true explicitly and explain why in the summary.",
             ],
             max_rounds=request.max_rounds,
             continue_previous=request.continue_previous,

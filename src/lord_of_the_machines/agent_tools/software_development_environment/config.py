@@ -69,6 +69,9 @@ DEFAULT_LARGE_CHANGE_FILE_THRESHOLD = 25
 DEFAULT_ACTIVITY_MEMORY_LIMIT = 500
 DEFAULT_JOURNAL_TEXT_PREVIEW_CHARS = 240
 DEFAULT_JOURNAL_FILE_PREFIX = "software-development-environment"
+DEFAULT_TRUNCATION_GUARD_ENABLED = True
+DEFAULT_MAX_FILE_SHRINK_RATIO = 0.35
+DEFAULT_MAX_FILE_SHRINK_CHARS = 2000
 
 
 @dataclass(slots=True)
@@ -90,6 +93,9 @@ class SoftwareDevelopmentEnvironmentToolConfig:
     journal_file_prefix: str = DEFAULT_JOURNAL_FILE_PREFIX
     activity_memory_limit: int = DEFAULT_ACTIVITY_MEMORY_LIMIT
     journal_text_preview_chars: int = DEFAULT_JOURNAL_TEXT_PREVIEW_CHARS
+    truncation_guard_enabled: bool = DEFAULT_TRUNCATION_GUARD_ENABLED
+    max_file_shrink_ratio: float = DEFAULT_MAX_FILE_SHRINK_RATIO
+    max_file_shrink_chars: int = DEFAULT_MAX_FILE_SHRINK_CHARS
     permission_policy: SoftwareDevelopmentEnvironmentPermissionPolicy = field(
         default_factory=SoftwareDevelopmentEnvironmentPermissionPolicy
     )
@@ -109,3 +115,7 @@ class SoftwareDevelopmentEnvironmentToolConfig:
             raise ValueError("execution_policy.max_destructive_entries must be >= 1 when set.")
         if self.execution_policy.max_command_timeout_seconds is not None and self.execution_policy.max_command_timeout_seconds < 1:
             raise ValueError("execution_policy.max_command_timeout_seconds must be >= 1 when set.")
+        if not (0.0 <= float(self.max_file_shrink_ratio) <= 1.0):
+            raise ValueError("max_file_shrink_ratio must be between 0.0 and 1.0.")
+        if int(self.max_file_shrink_chars) < 0:
+            raise ValueError("max_file_shrink_chars must be >= 0.")

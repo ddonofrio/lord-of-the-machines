@@ -14,6 +14,7 @@ from lord_of_the_machines.runtime.paths import LOG_DIR
 DEFAULT_LOG_DIR = LOG_DIR
 LOGGER_ROOT = "lord_of_the_machines"
 _CURRENT_LOG_PATH: Path | None = None
+_CURRENT_HUMAN_LOG_PATH: Path | None = None
 
 _SECRET_KEYS = {
     "api_key",
@@ -33,7 +34,7 @@ def configure_run_logging(
     log_dir: str | Path | None = None,
     level: int = logging.DEBUG,
 ) -> Path:
-    global _CURRENT_LOG_PATH
+    global _CURRENT_LOG_PATH, _CURRENT_HUMAN_LOG_PATH
 
     resolved_log_dir = Path(log_dir) if log_dir is not None else DEFAULT_LOG_DIR
     resolved_log_dir.mkdir(parents=True, exist_ok=True)
@@ -41,6 +42,7 @@ def configure_run_logging(
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_name = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in run_name)
     log_path = resolved_log_dir / f"{safe_name}-{timestamp}.log"
+    human_log_path = resolved_log_dir / f"human-readable-{safe_name}-{timestamp}.md"
 
     root_logger = logging.getLogger(LOGGER_ROOT)
     _close_handlers(root_logger)
@@ -58,16 +60,33 @@ def configure_run_logging(
     root_logger.addHandler(handler)
 
     _CURRENT_LOG_PATH = log_path
+    _CURRENT_HUMAN_LOG_PATH = human_log_path
+    human_log_path.write_text(
+        (
+            f"# Human Readable Run Log\n"
+            f"- run_name: `{safe_name}`\n"
+            f"- started_at: `{datetime.now().isoformat()}`\n\n"
+            "## Timeline\n\n"
+        ),
+        encoding="utf-8",
+    )
     root_logger.debug("logging configured: %s", log_path)
     return log_path
 
 
 def close_run_logging() -> None:
+    global _CURRENT_LOG_PATH, _CURRENT_HUMAN_LOG_PATH
     _close_handlers(logging.getLogger(LOGGER_ROOT))
+    _CURRENT_LOG_PATH = None
+    _CURRENT_HUMAN_LOG_PATH = None
 
 
 def current_log_path() -> Path | None:
     return _CURRENT_LOG_PATH
+
+
+def current_human_log_path() -> Path | None:
+    return _CURRENT_HUMAN_LOG_PATH
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -78,6 +97,39 @@ def log_json(logger: logging.Logger, label: str, value: Any, *, level: int = log
     if not logger.isEnabledFor(level):
         return
     logger.log(level, "%s\n%s", label, json.dumps(to_loggable(value), ensure_ascii=False, indent=2))
+
+
+def log_timeline(
+    *,
+    actor: str,
+    action: str,
+    mission_id: str | None = None,
+    phase: str | None = None,
+    details: dict[str, Any] | None = None,
+    usage: dict[str, Any] | None = None,
+    cost: dict[str, Any] | None = None,
+) -> None:
+    if _CURRENT_HUMAN_LOG_PATH is None:
+        return
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    segments = [f"{timestamp}", actor.strip() or "unknown", action.strip() or "action"]
+    if mission_id:
+        segments.append(f"mission={mission_id}")
+    if phase:
+        segments.append(f"phase={phase}")
+    if usage:
+        usage_total = usage.get("total_tokens")
+        if usage_total is not None:
+            segments.append(f"tokens={usage_total}")
+    if cost and isinstance(cost, dict):
+        cost_usd = (cost.get("cost_usd") or {}).get("total")
+        if isinstance(cost_usd, int | float):
+            segments.append(f"cost_usd={cost_usd:.6f}")
+    line = " | ".join(segments)
+    if details:
+        line = f"{line} | details={json.dumps(to_loggable(details), ensure_ascii=False)}"
+    with _CURRENT_HUMAN_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
 
 
 def to_loggable(value: Any) -> Any:

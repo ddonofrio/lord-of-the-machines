@@ -30,6 +30,13 @@ class EditingOperationsMixin:
 
         before_text, before_sha256 = self._read_existing_text(path)
         self._assert_expected_sha256(path, request.expected_sha256, current_sha256=before_sha256)
+        self._assert_no_large_truncation(
+            path,
+            before_text=before_text,
+            after_text=request.content,
+            operation_name="write_file",
+            allow_large_rewrite=request.allow_large_rewrite,
+        )
 
         path.write_text(request.content, encoding="utf-8", newline="")
         after_text = path.read_text(encoding="utf-8")
@@ -73,6 +80,13 @@ class EditingOperationsMixin:
             )
 
         after_text = before_text.replace(old_text, new_text)
+        self._assert_no_large_truncation(
+            path,
+            before_text=before_text,
+            after_text=after_text,
+            operation_name="replace_text",
+            allow_large_rewrite=request.allow_large_rewrite,
+        )
         path.write_text(after_text, encoding="utf-8", newline="")
         result = self._change_result(path, before_text, after_text, "replace_text")
         result.replacements = occurrences
@@ -97,6 +111,13 @@ class EditingOperationsMixin:
         replacement_lines = replacement.splitlines(keepends=True)
         after_lines = [*lines[: start_line - 1], *replacement_lines, *lines[end_line:]]
         after_text = "".join(after_lines)
+        self._assert_no_large_truncation(
+            path,
+            before_text=before_text,
+            after_text=after_text,
+            operation_name="replace_lines",
+            allow_large_rewrite=request.allow_large_rewrite,
+        )
         path.write_text(after_text, encoding="utf-8", newline="")
         result = self._change_result(path, before_text, after_text, "replace_lines")
         result.replaced_line_range = LineRange(start_line=start_line, end_line=end_line)
@@ -127,6 +148,13 @@ class EditingOperationsMixin:
         anchor_end = anchor_start + len(anchor)
         insert_at = anchor_start if position == "before" else anchor_end
         after_text = before_text[:insert_at] + request.text + before_text[insert_at:]
+        self._assert_no_large_truncation(
+            path,
+            before_text=before_text,
+            after_text=after_text,
+            operation_name="insert_text",
+            allow_large_rewrite=request.allow_large_rewrite,
+        )
         path.write_text(after_text, encoding="utf-8", newline="")
         result = self._change_result(path, before_text, after_text, "insert_text")
         result.anchor_occurrence = occurrence

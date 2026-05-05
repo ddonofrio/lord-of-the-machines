@@ -414,6 +414,7 @@ class WriteFileRequest:
     expected_sha256: str | None = None
     if_missing_only: bool = False
     create_directories: bool = True
+    allow_large_rewrite: bool = False
     allow_protected_path: bool = False
 
     @classmethod
@@ -425,6 +426,7 @@ class WriteFileRequest:
             expected_sha256=_optional_string(values, "expected_sha256"),
             if_missing_only=_optional_bool(values, "if_missing_only", False),
             create_directories=_optional_bool(values, "create_directories", True),
+            allow_large_rewrite=_optional_bool(values, "allow_large_rewrite", False),
             allow_protected_path=_optional_bool(values, "allow_protected_path", False),
         )
 
@@ -456,6 +458,7 @@ class ReplaceTextRequest:
     new_text: str
     expected_occurrences: int | None = None
     expected_sha256: str | None = None
+    allow_large_rewrite: bool = False
     allow_protected_path: bool = False
 
     @classmethod
@@ -467,6 +470,7 @@ class ReplaceTextRequest:
             new_text=_require_text(values, "new_text"),
             expected_occurrences=_optional_int(values, "expected_occurrences"),
             expected_sha256=_optional_string(values, "expected_sha256"),
+            allow_large_rewrite=_optional_bool(values, "allow_large_rewrite", False),
             allow_protected_path=_optional_bool(values, "allow_protected_path", False),
         )
 
@@ -478,6 +482,7 @@ class ReplaceLinesRequest:
     end_line: int
     replacement: str
     expected_sha256: str | None = None
+    allow_large_rewrite: bool = False
     allow_protected_path: bool = False
 
     @classmethod
@@ -493,6 +498,7 @@ class ReplaceLinesRequest:
             end_line=end_line,
             replacement=_require_text(values, "replacement"),
             expected_sha256=_optional_string(values, "expected_sha256"),
+            allow_large_rewrite=_optional_bool(values, "allow_large_rewrite", False),
             allow_protected_path=_optional_bool(values, "allow_protected_path", False),
         )
 
@@ -505,6 +511,7 @@ class InsertTextRequest:
     position: str = "after"
     occurrence: int = 1
     expected_sha256: str | None = None
+    allow_large_rewrite: bool = False
     allow_protected_path: bool = False
 
     @classmethod
@@ -518,6 +525,7 @@ class InsertTextRequest:
             position=_optional_string(values, "position") or "after",
             occurrence=occurrence if occurrence is not None else 1,
             expected_sha256=_optional_string(values, "expected_sha256"),
+            allow_large_rewrite=_optional_bool(values, "allow_large_rewrite", False),
             allow_protected_path=_optional_bool(values, "allow_protected_path", False),
         )
 

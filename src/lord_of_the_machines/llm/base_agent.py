@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from lord_of_the_machines.llm.config import BaseAgentConfig
+from lord_of_the_machines.llm.costs import estimate_usage_cost, usage_token_summary
 from lord_of_the_machines.llm.errors import AgentContextBudgetError, AgentProtocolError, MissingApiKeyError
 from lord_of_the_machines.llm.history import HistoryManager
 from lord_of_the_machines.llm.log_views import (
@@ -53,6 +54,8 @@ class BaseAgent:
     ):
         self.config = config or BaseAgentConfig.from_file()
         self.last_response_id: str | None = None
+        self.last_query_usage: dict[str, int] | None = None
+        self.last_query_cost: dict[str, Any] | None = None
         self._logger = get_logger("agents.base_agent")
         self._provider = get_provider_adapter(self.config.model.provider)
         if not self._provider.supports_tool_calling_mode(self.config.tool_calling.mode):
@@ -196,6 +199,8 @@ class BaseAgent:
         disabled_tools: set[str] | list[str] | tuple[str, ...] | None = None,
         **overrides: Any,
     ) -> AgentReply:
+        self.last_query_usage = None
+        self.last_query_cost = None
         log_json(
             self._logger,
             "base_agent.query.start",
@@ -232,6 +237,15 @@ class BaseAgent:
             overrides=overrides,
             disabled_tools=disabled_tool_names,
         )
+        usage_accumulator = {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "billable_input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+        usage_seen = False
+        usage_seen = self._accumulate_reply_usage(reply, usage_accumulator) or usage_seen
 
         all_tool_results: list[AgentToolResult] = []
         while True:
@@ -249,6 +263,7 @@ class BaseAgent:
                 return reply
 
             if reply.messages or not tool_results:
+                self._finalize_query_costs(usage_accumulator, usage_seen)
                 self._history.record_turn(message, reply)
                 log_json(
                     self._logger,
@@ -292,6 +307,7 @@ class BaseAgent:
                     overrides=overrides,
                     disabled_tools=disabled_tool_names,
                 )
+            usage_seen = self._accumulate_reply_usage(reply, usage_accumulator) or usage_seen
 
     def query_structured_tool_result(
         self,
@@ -318,6 +334,34 @@ class BaseAgent:
                 return copy.deepcopy(tool_result.result), reply
             return None, reply
         return None, reply
+
+    def _accumulate_reply_usage(self, reply: AgentReply, accumulator: dict[str, int]) -> bool:
+        usage = usage_token_summary(reply.usage)
+        if usage is None:
+            return False
+        for key, value in usage.items():
+            accumulator[key] = int(accumulator.get(key, 0)) + int(value)
+        return True
+
+    def _finalize_query_costs(self, usage_accumulator: dict[str, int], usage_seen: bool) -> None:
+        if not usage_seen:
+            self.last_query_usage = None
+            self.last_query_cost = None
+            return
+        self.last_query_usage = dict(usage_accumulator)
+        self.last_query_cost = estimate_usage_cost(
+            model_name=self.config.model.effective_name(),
+            usage=self.last_query_usage,
+        )
+        log_json(
+            self._logger,
+            "base_agent.query.cost",
+            {
+                "agent_id": self._log_id(),
+                "usage": self.last_query_usage,
+                "cost": self.last_query_cost,
+            },
+        )
 
     def _send_reply(
         self,

@@ -9,4 +9,5 @@ REPO_ROOT = SRC_ROOT.parent
 
 CONFIG_DIR = REPO_ROOT / "config"
 DEFAULT_BASE_AGENT_CONFIG = CONFIG_DIR / "base_agent.json"
+DEFAULT_MODEL_PRICING_CONFIG = CONFIG_DIR / "model_pricing.json"
 LOG_DIR = REPO_ROOT / "logs"

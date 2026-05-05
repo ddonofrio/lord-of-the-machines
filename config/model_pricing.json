@@ -1,0 +1,12 @@
+{
+  "currency": "USD",
+  "updated_at": "2026-05-05",
+  "source": "https://platform.openai.com/docs/models/gpt-4.1",
+  "models": {
+    "gpt-4.1": {
+      "input_per_1m": 2.0,
+      "cached_input_per_1m": 0.5,
+      "output_per_1m": 8.0
+    }
+  }
+}

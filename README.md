@@ -4,6 +4,10 @@ Lord of the Machines is a new lab for building an autonomous AI system that can 
 
 This first cut focuses on getting the foundation right: a generic, configurable, and tested LLM agent core, plus the first serious tool package for software development work. There is no autonomous mission server or self-programming loop yet; those layers should be built on top of this core.
 
+## Technical Architecture
+
+For an in-depth technical architecture overview, including runtime flow, tools, mission lifecycle, and extension points, see [docs/technical-architecture-baseline.md](docs/technical-architecture-baseline.md).
+
 ## Current Status
 
 Included so far:
@@ -409,7 +413,11 @@ By default each run writes logs to:
 
 ```text
 logs/mission-run-<timestamp>.log
+logs/human-readable-mission-run-<timestamp>.md
 ```
+
+The human-readable log is a timeline view with actor/action entries and per-role
+token/cost summaries when usage metadata is available.
 
 Useful flags:
 
@@ -417,6 +425,17 @@ Useful flags:
 - `--max-follow-up-rounds <N>`: allow more rounds before a phase is blocked.
 - `--require-all-completed`: return exit code `3` if any mission finishes in a non-completed status.
 - `--log-dir <path>`: change log output directory.
+
+## Model Pricing
+
+Token cost estimation is configured in:
+
+```text
+config/model_pricing.json
+```
+
+Default pricing includes `gpt-4.1` rates (input, cached input, output) and is
+used to annotate mission timeline events with cost estimates.
 
 ## Next Work
 

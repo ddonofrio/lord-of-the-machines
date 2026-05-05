@@ -94,7 +94,10 @@ def build_definition(tool_name: str) -> ToolDefinition:
             ),
             ToolMethodDefinition(
                 name="write_file",
-                description="Create or overwrite a text file, optionally guarded by an expected previous sha256.",
+                description=(
+                    "Create or overwrite a text file, optionally guarded by an expected previous sha256. "
+                    "For existing files, prefer targeted edit methods over full rewrites."
+                ),
                 arguments_schema={
                     "type": "object",
                     "additionalProperties": False,
@@ -104,6 +107,7 @@ def build_definition(tool_name: str) -> ToolDefinition:
                         "expected_sha256": {"type": "string"},
                         "if_missing_only": {"type": "boolean"},
                         "create_directories": {"type": "boolean"},
+                        "allow_large_rewrite": {"type": "boolean"},
                         "allow_protected_path": {"type": "boolean"},
                     },
                     "required": ["path", "content"],
@@ -137,6 +141,7 @@ def build_definition(tool_name: str) -> ToolDefinition:
                         "new_text": {"type": "string"},
                         "expected_occurrences": {"type": "integer"},
                         "expected_sha256": {"type": "string"},
+                        "allow_large_rewrite": {"type": "boolean"},
                         "allow_protected_path": {"type": "boolean"},
                     },
                     "required": ["path", "old_text", "new_text"],
@@ -154,6 +159,7 @@ def build_definition(tool_name: str) -> ToolDefinition:
                         "end_line": {"type": "integer"},
                         "replacement": {"type": "string"},
                         "expected_sha256": {"type": "string"},
+                        "allow_large_rewrite": {"type": "boolean"},
                         "allow_protected_path": {"type": "boolean"},
                     },
                     "required": ["path", "start_line", "end_line", "replacement"],
@@ -172,6 +178,7 @@ def build_definition(tool_name: str) -> ToolDefinition:
                         "position": {"type": "string", "enum": ["before", "after"]},
                         "occurrence": {"type": "integer"},
                         "expected_sha256": {"type": "string"},
+                        "allow_large_rewrite": {"type": "boolean"},
                         "allow_protected_path": {"type": "boolean"},
                     },
                     "required": ["path", "anchor", "text"],

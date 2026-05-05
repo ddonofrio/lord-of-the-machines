@@ -25,6 +25,8 @@ from lord_of_the_machines.mission import (
     SoftwareDeveloperRoleExecutorConfig,
 )
 from lord_of_the_machines.runtime import close_run_logging, configure_run_logging, current_log_path
+from lord_of_the_machines.runtime import current_human_log_path
+from lord_of_the_machines.runtime import log_timeline
 
 
 def create_storage_tools(state_dir: Path) -> tuple[MissionRegistryTool, EventBusTool, ArtifactRegistryTool]:
@@ -161,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.reset_state and state_dir.exists():
         shutil.rmtree(state_dir)
     log_path: str | None = None
+    human_log_path: str | None = None
     exit_code = 0
     try:
         if not args.no_log:
@@ -168,6 +171,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             configure_run_logging(run_name=args.run_name, log_dir=resolved_log_dir)
             current = current_log_path()
             log_path = str(current) if current is not None else None
+            current_human = current_human_log_path()
+            human_log_path = str(current_human) if current_human is not None else None
+            log_timeline(
+                actor="mission_cli",
+                action="run started",
+                details={
+                    "repo_root": str(repo_root),
+                    "state_dir": str(state_dir),
+                    "missions_file": str(missions_file),
+                    "bootstrap_only": bool(args.bootstrap_only),
+                },
+            )
 
         try:
             if args.bootstrap_only:
@@ -217,6 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if log_path and isinstance(result, dict):
             result = dict(result)
             result["log_path"] = log_path
+            if human_log_path:
+                result["human_log_path"] = human_log_path
             if incomplete_missions:
                 result["incomplete_missions"] = incomplete_missions
 
@@ -242,6 +259,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         print(f"- {mission['mission_id']} ({mission['status']})")
             if log_path:
                 print(f"Logs: {log_path}")
+            if human_log_path:
+                print(f"Human logs: {human_log_path}")
+        if not args.bootstrap_only:
+            log_timeline(actor="mission_cli", action=f"run finished (exit={exit_code})")
         return exit_code
     finally:
         if not args.no_log:

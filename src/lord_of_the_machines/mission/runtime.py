@@ -18,7 +18,7 @@ from lord_of_the_machines.mission.events import (
     TOPIC_PHASE_FAILED,
     TOPIC_PHASE_REQUESTED,
 )
-from lord_of_the_machines.runtime import get_logger, log_json
+from lord_of_the_machines.runtime import get_logger, log_json, log_timeline
 
 
 class RoleExecutor(Protocol):
@@ -122,6 +122,17 @@ class MissionRuntime:
                 "mission_runtime.seeded",
                 {"mission_id": mission_id, "payload": payload},
             )
+            log_timeline(
+                actor=self.config.consumer_id,
+                action="seeded phase request",
+                mission_id=mission_id,
+                phase=self.config.initial_phase,
+                details={
+                    "role": role,
+                    "objective": objective,
+                    "round": 1,
+                },
+            )
         return {"seeded_events": seeded}
 
     def run_once(self, *, max_events: int | None = None) -> dict[str, Any]:
@@ -198,6 +209,8 @@ class MissionRuntime:
 
         raw_result = executor.execute_task(request)
         result = raw_result if isinstance(raw_result, RoleTaskResult) else RoleTaskResult.from_mapping(raw_result)
+        usage = result.metadata.get("agent_usage") if isinstance(result.metadata, dict) else None
+        cost = result.metadata.get("agent_cost") if isinstance(result.metadata, dict) else None
         log_json(
             self._logger,
             "mission_runtime.role_result",
@@ -209,7 +222,18 @@ class MissionRuntime:
                 "status": result.status,
                 "summary": result.summary,
                 "has_artifact_content": bool(result.artifact_content),
+                "usage": usage,
+                "cost": cost,
             },
+        )
+        log_timeline(
+            actor=role,
+            action=f"reported result ({result.status})",
+            mission_id=mission_id,
+            phase=phase,
+            details={"summary": result.summary},
+            usage=usage if isinstance(usage, dict) else None,
+            cost=cost if isinstance(cost, dict) else None,
         )
         return self._apply_role_result(
             mission_id=mission_id,
@@ -265,6 +289,18 @@ class MissionRuntime:
                     "next_phase_scheduled": next_phase_event is not None,
                 },
             )
+            log_timeline(
+                actor=self.config.consumer_id,
+                action="phase completed",
+                mission_id=mission_id,
+                phase=phase,
+                details={
+                    "role": role,
+                    "summary": result.summary,
+                    "artifact_published": artifact is not None,
+                    "next_phase_scheduled": next_phase_event is not None,
+                },
+            )
             return {"status": result.status, "artifact": artifact, "next_phase_event": next_phase_event}
 
         if result.status == STATUS_NEEDS_FOLLOW_UP:
@@ -296,6 +332,17 @@ class MissionRuntime:
                     {
                         "mission_id": mission_id,
                         "phase": phase,
+                        "role": role,
+                        "round": round_number,
+                        "summary": result.summary,
+                    },
+                )
+                log_timeline(
+                    actor=self.config.consumer_id,
+                    action="phase blocked (follow-up limit)",
+                    mission_id=mission_id,
+                    phase=phase,
+                    details={
                         "role": role,
                         "round": round_number,
                         "summary": result.summary,
@@ -344,6 +391,17 @@ class MissionRuntime:
                     "summary": result.summary,
                 },
             )
+            log_timeline(
+                actor=self.config.consumer_id,
+                action="scheduled follow-up round",
+                mission_id=mission_id,
+                phase=phase,
+                details={
+                    "role": role,
+                    "next_round": round_number + 1,
+                    "summary": result.summary,
+                },
+            )
             return {
                 "status": STATUS_NEEDS_FOLLOW_UP,
                 "round": round_number + 1,
@@ -377,6 +435,17 @@ class MissionRuntime:
             {
                 "mission_id": mission_id,
                 "phase": phase,
+                "role": role,
+                "status": result.status,
+                "summary": result.summary,
+            },
+        )
+        log_timeline(
+            actor=self.config.consumer_id,
+            action="phase failed",
+            mission_id=mission_id,
+            phase=phase,
+            details={
                 "role": role,
                 "status": result.status,
                 "summary": result.summary,

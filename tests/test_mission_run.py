@@ -50,7 +50,9 @@ class MissionRunModuleTests(unittest.TestCase):
             self.assertEqual(output["loaded"], 1)
             self.assertEqual(len(output["created"]), 1)
             self.assertIn("log_path", output)
+            self.assertIn("human_log_path", output)
             self.assertTrue(Path(output["log_path"]).exists())
+            self.assertTrue(Path(output["human_log_path"]).exists())
 
     def test_require_all_completed_returns_non_zero_when_missions_are_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

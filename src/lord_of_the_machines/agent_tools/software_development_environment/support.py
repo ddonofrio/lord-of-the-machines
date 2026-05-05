@@ -192,6 +192,40 @@ class SoftwareDevelopmentEnvironmentSupport:
                 f"File changed since last read for {self._relative_path(path)}: expected sha256 {expected_sha256}, got {actual_sha256}."
             )
 
+    def _assert_no_large_truncation(
+        self,
+        path: Path,
+        *,
+        before_text: str,
+        after_text: str,
+        operation_name: str,
+        allow_large_rewrite: bool,
+    ) -> None:
+        if allow_large_rewrite:
+            return
+        if not self.config.truncation_guard_enabled:
+            return
+        before_length = len(before_text)
+        if before_length <= 0:
+            return
+        after_length = len(after_text)
+        removed_chars = before_length - after_length
+        if removed_chars <= 0:
+            return
+        removed_ratio = removed_chars / before_length
+        if removed_chars < self.config.max_file_shrink_chars:
+            return
+        if removed_ratio < self.config.max_file_shrink_ratio:
+            return
+        raise SoftwareDevelopmentEnvironmentPolicyError(
+            (
+                f"{operation_name} blocked by truncation guard for {self._relative_path(path)}: "
+                f"removed {removed_chars} chars ({removed_ratio:.1%}). "
+                "Use a targeted edit method (replace_text/replace_lines/insert_text) or set allow_large_rewrite=true "
+                "for an intentional full rewrite."
+            )
+        )
+
     def _change_result(self, path: Path, before_text: str, after_text: str, action: str) -> ChangeResult:
         diff = self._unified_diff(before_text, after_text, self._relative_path(path))
         return ChangeResult(

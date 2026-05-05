@@ -75,6 +75,33 @@ class SoftwareDevelopmentEnvironmentToolTests(unittest.TestCase):
                 }
             )
 
+    def test_truncation_guard_blocks_large_overwrite(self) -> None:
+        large_text = "A" * 10_000
+        (self.root / "README.md").write_text(large_text, encoding="utf-8")
+
+        with self.assertRaises(SoftwareDevelopmentEnvironmentPolicyError):
+            self.tool.handlers()["write_file"](
+                {
+                    "path": "README.md",
+                    "content": "short\n",
+                }
+            )
+
+    def test_truncation_guard_can_be_overridden_for_intentional_rewrite(self) -> None:
+        large_text = "A" * 10_000
+        (self.root / "README.md").write_text(large_text, encoding="utf-8")
+
+        result = self.tool.handlers()["write_file"](
+            {
+                "path": "README.md",
+                "content": "short\n",
+                "allow_large_rewrite": True,
+            }
+        )
+        self.assertTrue(result["changed"])
+        read_back = self.tool.handlers()["read_file"]({"path": "README.md"})
+        self.assertEqual(read_back["text"], "short")
+
     def test_delete_path_requires_explicit_confirmation(self) -> None:
         dry_run = self.tool.handlers()["delete_path"]({"path": "README.md"})
         self.assertTrue(dry_run["dry_run"])
