@@ -412,7 +412,7 @@ By default each run writes logs to:
 
 ```text
 logs/mission-run-<timestamp>.log
-logs/human-readable-mission-run-<timestamp>.md
+logs/human-readable-mission-run-<timestamp>.log
 ```
 
 The human-readable log is a timeline view with actor/action entries and per-role

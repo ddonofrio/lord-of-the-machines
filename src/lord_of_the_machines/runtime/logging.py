@@ -42,7 +42,7 @@ def configure_run_logging(
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_name = "".join(character if character.isalnum() or character in {"-", "_"} else "-" for character in run_name)
     log_path = resolved_log_dir / f"{safe_name}-{timestamp}.log"
-    human_log_path = resolved_log_dir / f"human-readable-{safe_name}-{timestamp}.md"
+    human_log_path = resolved_log_dir / f"human-readable-{safe_name}-{timestamp}.log"
 
     root_logger = logging.getLogger(LOGGER_ROOT)
     _close_handlers(root_logger)
