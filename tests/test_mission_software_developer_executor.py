@@ -4,11 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from lord_of_the_machines.agent_tools import SoftwareDevelopmentEnvironmentPolicyError
 from lord_of_the_machines.llm import BaseAgent
 from lord_of_the_machines.mission import (
     RoleTaskRequest,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
+    install_read_only_software_workspace_tool,
+    task_start_details,
 )
 from tests.helpers.fake_openai import FakeClient
 from tests.helpers.outputs import tool_output
@@ -32,6 +35,45 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
             phase="implementation",
             context={"target": "mission module"},
         )
+
+    def test_task_start_details_include_previous_artifact_handoff(self) -> None:
+        request = RoleTaskRequest(
+            objective="Implement the plan.",
+            mission_id="m_handoff",
+            phase="implementation",
+            context={
+                "previous_phase": "development_plan",
+                "previous_phase_summary": "Plan ready.",
+                "previous_artifact": {
+                    "artifact_id": "a1",
+                    "artifact_type": "development_plan",
+                    "title": "Development Plan",
+                    "producer_role": "software_development_manager",
+                    "content": "Do the work.",
+                },
+            },
+            constraints=["Keep changes scoped."],
+        )
+
+        details = task_start_details(request)
+
+        self.assertEqual(details["previous_phase"], "development_plan")
+        self.assertEqual(details["previous_artifact"]["title"], "Development Plan")
+        self.assertEqual(details["previous_artifact"]["content_chars"], len("Do the work."))
+        self.assertEqual(details["constraints_count"], 1)
+
+    def test_read_only_workspace_tool_allows_architect_inspection_but_blocks_writes(self) -> None:
+        (self.root / "README.md").write_text("# Project\n", encoding="utf-8")
+        agent = BaseAgent.new(client=FakeClient(), rate_limiter=None)
+
+        tool = install_read_only_software_workspace_tool(agent, workspace_root=self.root)
+        handlers = tool.handlers()
+
+        tool_names = [definition.name for definition in agent.list_tools()]
+        self.assertIn("software_development_environment", tool_names)
+        self.assertIn("README.md", str(handlers["list_tree"]({"path": ".", "max_depth": 1})))
+        with self.assertRaises(SoftwareDevelopmentEnvironmentPolicyError):
+            handlers["write_file"]({"path": "README.md", "content": "rewrite"})
 
     def test_completed_execution_with_allowed_changes_and_passing_diagnostics(self) -> None:
         (self.root / "tests" / "test_ok.py").write_text(

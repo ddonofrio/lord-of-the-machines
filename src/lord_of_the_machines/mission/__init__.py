@@ -11,6 +11,8 @@ from lord_of_the_machines.mission.executors import (
     BaseAgentRoleExecutorConfig,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
+    install_read_only_software_workspace_tool,
+    task_start_details,
 )
 from lord_of_the_machines.mission.meeting_tool_agent import (
     MeetingRoleExecutor,
@@ -47,6 +49,8 @@ __all__ = [
     "BaseAgentRoleExecutorConfig",
     "SoftwareDeveloperRoleExecutor",
     "SoftwareDeveloperRoleExecutorConfig",
+    "install_read_only_software_workspace_tool",
+    "task_start_details",
     "MeetingRoleExecutor",
     "MeetingToolAgent",
     "MeetingToolAgentConfig",

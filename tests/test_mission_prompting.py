@@ -106,6 +106,9 @@ class MissionPromptingTests(unittest.TestCase):
         self.assertIn("# Golden Rules", architect_prompt)
         self.assertIn("# Software Architect role", architect_prompt)
         self.assertIn("# Software architect", architect_prompt)
+        self.assertIn("owner of technical architecture documentation", architect_prompt)
+        self.assertIn("Do not invent paths", architect_prompt)
+        self.assertIn("module names", architect_prompt)
         self.assertNotIn("# Product Manager rules", architect_prompt)
         self.assertNotIn("# Secondary objectives", architect_prompt)
 

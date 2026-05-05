@@ -42,10 +42,7 @@ class BaseAgentRoleExecutor:
             action="started task",
             mission_id=request.mission_id,
             phase=request.phase,
-            details={
-                "objective": request.objective,
-                "constraints_count": len(request.constraints),
-            },
+            details=task_start_details(request),
         )
         result = self._bridge.execute_task(request)
         result.metadata = dict(result.metadata)
@@ -65,6 +62,58 @@ class BaseAgentRoleExecutor:
             cost=cost,
         )
         return result
+
+
+def task_start_details(request: RoleTaskRequest) -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "objective": request.objective,
+        "constraints_count": len(request.constraints),
+    }
+    context = request.context if isinstance(request.context, dict) else {}
+    previous_phase = context.get("previous_phase")
+    if previous_phase:
+        details["previous_phase"] = previous_phase
+    previous_summary = context.get("previous_phase_summary")
+    if previous_summary:
+        details["previous_phase_summary"] = previous_summary
+    previous_artifact = context.get("previous_artifact")
+    if isinstance(previous_artifact, dict):
+        artifact_details = {
+            "artifact_id": previous_artifact.get("artifact_id"),
+            "artifact_type": previous_artifact.get("artifact_type"),
+            "title": previous_artifact.get("title"),
+            "producer_role": previous_artifact.get("producer_role"),
+            "content_chars": len(str(previous_artifact.get("content") or "")),
+        }
+        details["previous_artifact"] = {
+            key: value
+            for key, value in artifact_details.items()
+            if value not in {None, ""}
+        }
+    return details
+
+
+def install_read_only_software_workspace_tool(
+    agent: BaseAgent,
+    *,
+    workspace_root: Path,
+) -> SoftwareDevelopmentEnvironmentTool:
+    tool = SoftwareDevelopmentEnvironmentTool(
+        workspace_root,
+        config=SoftwareDevelopmentEnvironmentToolConfig(
+            root_path=workspace_root,
+            permission_policy=SoftwareDevelopmentEnvironmentPermissionPolicy.read_only(),
+            execution_policy=SoftwareDevelopmentEnvironmentExecutionPolicy(
+                require_confirmation_for_destructive_operations=True,
+                require_dry_run_for_move=True,
+                require_dry_run_for_delete=True,
+                max_destructive_entries=10,
+                max_command_timeout_seconds=30,
+            ),
+        ),
+    )
+    tool.install(agent)
+    return tool
 
 
 @dataclass(slots=True)

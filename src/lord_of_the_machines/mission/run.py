@@ -24,6 +24,7 @@ from lord_of_the_machines.mission import (
     RoleAgentFactory,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
+    install_read_only_software_workspace_tool,
 )
 from lord_of_the_machines.runtime import close_run_logging, configure_run_logging, current_log_path
 from lord_of_the_machines.runtime import current_human_log_path
@@ -104,6 +105,11 @@ def build_default_runner(
     for agent in role_agents.values():
         meeting_tool.install(agent)
 
+    install_read_only_software_workspace_tool(
+        software_architect_agent,
+        workspace_root=repo_root,
+    )
+
     product_director_executor = BaseAgentRoleExecutor(
         product_director_agent,
         config=BaseAgentRoleExecutorConfig(role_name="product_director"),
@@ -162,6 +168,7 @@ def build_default_runner(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_standard_streams_for_unicode()
     parser = argparse.ArgumentParser(description="Run Lord of the Machines mission runner.")
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--state-dir", type=Path, default=None)
@@ -301,6 +308,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         if not args.no_log:
             close_run_logging()
+
+
+def configure_standard_streams_for_unicode() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (OSError, ValueError):
+            continue
 
 
 if __name__ == "__main__":
