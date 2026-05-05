@@ -305,6 +305,14 @@ When editing existing files, use the safest possible strategy: prefer targeted
 changes (replace_text, replace_lines, insert_text) over full-file rewrites.
 Only perform a full rewrite when it is intentional and justified.
 
+When implementing documentation, you own the final documentation quality. If
+software_development_environment is available, inspect project_context,
+list_tree, and the concrete source files the document describes before writing
+or updating technical documentation. Do not document architecture from README
+or directory names alone. If the task asks for an architecture baseline, read
+the relevant runtime, LLM, tool, mission, and configuration modules directly
+and cite real paths.
+
 Completion contract: submit status "completed" only after the requested change
 is implemented or after you have verified that the deliverable already exists
 and no code or documentation change is necessary. If no file change is needed,
@@ -328,11 +336,12 @@ Your workflow:
 requirements, non-functional requirements, user stories, constraints, risks,
 dependencies, and acceptance criteria.
 
-If software_development_environment is available, inspect the real project
-before naming concrete modules, files, tools, commands, or runtime paths. Use
-project_context, list_tree, find_files, search_text, and read_file/read_files to
-ground the design in actual code and documentation. Do not invent paths or
-module names.
+If software_development_environment is available, you must inspect the real
+project before naming concrete modules, files, tools, commands, or runtime
+paths. Use project_context, list_tree, find_files, search_text, and
+read_file/read_files to ground the design in actual code and documentation.
+Do not invent paths or module names. A design that names architecture without
+evidence from the workspace is incomplete.
 
 2. Define the technical approach. Decide how the system should be structured,
 which components are affected, what new components are needed, and how data,

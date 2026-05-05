@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from lord_of_the_machines.llm.tool_definitions import ToolDefinition, ToolMethodDefinition
@@ -9,6 +10,7 @@ PAGINATION_TOOL_NAME = "pagination"
 PAGINATION_REF_PREFIX = "pagination://"
 DEFAULT_PAGINATION_TARGET = "default"
 PAGINATION_STATUSES = {"continue", "stop"}
+PAGINATION_REF_PATTERN = re.compile(r"pagination://[A-Za-z0-9_.:-]+")
 
 
 def pagination_tool_definition() -> ToolDefinition:
@@ -113,6 +115,32 @@ def resolve_pagination_references(value: Any, pages_by_target: dict[str, list[st
     if isinstance(value, tuple):
         return tuple(resolve_pagination_references(item, pages_by_target) for item in value)
     return value
+
+
+def unresolved_pagination_references(value: Any, pages_by_target: dict[str, list[str]]) -> list[str]:
+    refs = _collect_pagination_references(value)
+    unresolved = []
+    for ref in refs:
+        target = ref[len(PAGINATION_REF_PREFIX):]
+        if target not in pages_by_target:
+            unresolved.append(ref)
+    return sorted(unresolved)
+
+
+def _collect_pagination_references(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return set(PAGINATION_REF_PATTERN.findall(value))
+    if isinstance(value, dict):
+        refs: set[str] = set()
+        for item in value.values():
+            refs.update(_collect_pagination_references(item))
+        return refs
+    if isinstance(value, (list, tuple)):
+        refs: set[str] = set()
+        for item in value:
+            refs.update(_collect_pagination_references(item))
+        return refs
+    return set()
 
 
 def _resolve_string_reference(value: str, pages_by_target: dict[str, list[str]]) -> str:

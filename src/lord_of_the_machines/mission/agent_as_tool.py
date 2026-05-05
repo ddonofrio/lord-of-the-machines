@@ -173,6 +173,13 @@ class AgentAsToolBridge:
             '"follow_ups":["string"],'
             '"metadata":{}'
             "}\n"
+            "If any string field is too long, first call pagination.append_page "
+            "for a stable target until status='stop', then use the matching "
+            "pagination://<target> reference. Never submit a pagination:// "
+            "reference unless that target was populated in the current task. "
+            "When the content is already in a project file, either submit the "
+            "literal final content or a concise implementation report; do not "
+            "invent unresolved pagination references.\n"
             "After calling that tool, optionally call reply.send_message with a short human summary.\n"
             f"Task payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )

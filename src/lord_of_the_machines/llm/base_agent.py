@@ -28,6 +28,7 @@ from lord_of_the_machines.llm.pagination import (
     pagination_ref,
     pagination_tool_definition,
     resolve_pagination_references,
+    unresolved_pagination_references,
 )
 from lord_of_the_machines.llm.payload import AgentPayloadBuilder
 from lord_of_the_machines.llm.parser import AgentOutputParser
@@ -263,14 +264,19 @@ class BaseAgent:
             tool_results = self._tools.execute(reply.tool_calls)
             all_tool_results.extend(tool_results)
             reply.tool_results = list(all_tool_results)
+            unresolved_pagination_results = self._mark_unresolved_pagination_tool_results(tool_results)
             pagination_continue_requested = self._pagination_continue_requested(tool_results)
             if not pagination_continue_requested:
-                disabled_tool_names.update(single_round_tool_names(self.config.agent_tools, reply.tool_calls))
+                single_round_tools = single_round_tool_names(self.config.agent_tools, reply.tool_calls)
+                single_round_tools.difference_update({result.tool for result in unresolved_pagination_results})
+                disabled_tool_names.update(single_round_tools)
             self._resolve_reply_pagination_references(reply)
+            needs_tool_result_repair = bool(unresolved_pagination_results)
 
             if (
                 tool_results
                 and return_after_tool_results
+                and not needs_tool_result_repair
                 and not pagination_continue_requested
                 and should_return_after_tool_results(tool_results, return_tool_names)
             ):
@@ -302,7 +308,11 @@ class BaseAgent:
                 )
                 return reply
 
-            if (reply.messages and not pagination_continue_requested) or not tool_results:
+            if (
+                reply.messages
+                and not pagination_continue_requested
+                and not needs_tool_result_repair
+            ) or not tool_results:
                 self._finalize_query_costs(usage_accumulator, usage_seen)
                 self._history.record_turn(message, reply)
                 log_json(
@@ -693,6 +703,35 @@ class BaseAgent:
             message = tool_call.arguments.get(self.config.reply.message_argument)
             if isinstance(message, str):
                 tool_call.arguments[self.config.reply.message_argument] = self._resolve_pagination_references(message)
+
+    def _mark_unresolved_pagination_tool_results(self, tool_results: list[AgentToolResult]) -> list[AgentToolResult]:
+        unresolved_results = []
+        for tool_result in tool_results:
+            if not tool_result.ok:
+                continue
+            unresolved_refs = unresolved_pagination_references(tool_result.result, self._pagination_pages)
+            if not unresolved_refs:
+                continue
+            tool_result.ok = False
+            tool_result.error = (
+                "Unresolved pagination reference(s): "
+                + ", ".join(unresolved_refs)
+                + ". Before using a pagination://<target> value, call "
+                "pagination.append_page for that target in the current query, ending with status='stop', "
+                "or submit the literal content directly."
+            )
+            unresolved_results.append(tool_result)
+            log_json(
+                self._logger,
+                "base_agent.pagination.unresolved_reference",
+                {
+                    "agent_id": self._log_id(),
+                    "tool": tool_result.tool,
+                    "method": tool_result.method,
+                    "unresolved_refs": unresolved_refs,
+                },
+            )
+        return unresolved_results
 
     def _should_finish_paginated_reply(self, tool_results: list[AgentToolResult]) -> bool:
         if not tool_results:

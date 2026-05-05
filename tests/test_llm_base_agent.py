@@ -497,6 +497,66 @@ class BaseAgentTests(unittest.TestCase):
 
         self.assertEqual(result, {"artifact_content": "# Title\nBody\n"})
 
+    def test_structured_tool_result_repairs_unresolved_paginated_reference(self) -> None:
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "result",
+                        "method": "submit",
+                        "arguments": {"artifact_content": "pagination://artifact_content"},
+                    }
+                ),
+                tool_output(
+                    {
+                        "tool": "pagination",
+                        "method": "append_page",
+                        "arguments": {
+                            "target": "artifact_content",
+                            "content": "# Fixed\n",
+                            "status": "stop",
+                        },
+                    },
+                    {
+                        "tool": "result",
+                        "method": "submit",
+                        "arguments": {"artifact_content": "pagination://artifact_content"},
+                    },
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None, max_tool_rounds=3)
+        agent.add_tool(
+            ToolDefinition(
+                name="result",
+                single_round=True,
+                methods=[
+                    ToolMethodDefinition(
+                        name="submit",
+                        arguments_schema={
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"artifact_content": {"type": "string"}},
+                            "required": ["artifact_content"],
+                        },
+                    )
+                ],
+            ),
+            handlers={"submit": lambda arguments: dict(arguments)},
+        )
+
+        result, _reply = agent.query_structured_tool_result(
+            "return a long structured artifact",
+            tool_name="result",
+            method_name="submit",
+        )
+
+        self.assertEqual(result, {"artifact_content": "# Fixed\n"})
+        self.assertEqual(len(client.responses.calls), 2)
+        repair_payload = json.loads(client.responses.calls[1]["input"])
+        self.assertEqual(repair_payload["user"]["prompt"]["type"], "tool_results")
+        self.assertIn("Unresolved pagination", json.dumps(repair_payload))
+
     def test_structured_tool_result_finalizes_usage_and_cost(self) -> None:
         client = FakeClient(
             [
