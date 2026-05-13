@@ -226,7 +226,7 @@
     "conversation": null,
     "include": null,
     "instructions": null,
-    "max_output_tokens": 1536,
+    "max_output_tokens": 4096,
     "max_tool_calls": null,
     "metadata": null,
     "parallel_tool_calls": true,
