@@ -64,6 +64,11 @@ class AgentAsToolConfig:
     require_structured_result: bool = True
     structured_result_retries: int = 2
     disable_reply_tool_for_structured_result: bool = True
+    structured_result_max_tool_rounds: int | None = None
+    structured_result_max_output_tokens: int | None = 1536
+    structured_result_parallel_tool_calls: bool = False
+    force_structured_submit_on_failure: bool = True
+    forced_submit_max_tool_rounds: int = 1
 
 
 class AgentAsToolBridge:
@@ -102,6 +107,7 @@ class AgentAsToolBridge:
         disabled_tools = set()
         if self.config.disable_reply_tool_for_structured_result:
             disabled_tools.add(self.agent.config.reply.tool)
+        query_overrides = self._query_overrides()
         try:
             raw_result, reply = self.agent.query_structured_tool_result(
                 prompt,
@@ -109,18 +115,20 @@ class AgentAsToolBridge:
                 method_name=self.config.result_method_name,
                 continue_previous=request.continue_previous,
                 disabled_tools=disabled_tools,
+                max_tool_rounds=self.config.structured_result_max_tool_rounds,
+                **query_overrides,
             )
         except Exception as exc:
-            return RoleTaskResult(
-                status="needs_follow_up",
-                summary=(
-                    "Role agent did not submit a structured task result via "
-                    f"{self.config.result_tool_name}.{self.config.result_method_name}."
-                ),
-                follow_ups=[
-                    f"Call {self.config.result_tool_name}.{self.config.result_method_name} with status and summary."
-                ],
-                metadata={"query_error": str(exc), "query_stage": "initial"},
+            forced = self._force_structured_submission(
+                reason=f"Initial structured query failed: {exc}",
+                disabled_tools=disabled_tools,
+                query_overrides=query_overrides,
+            )
+            if forced is not None:
+                return forced
+            return self._missing_structured_result(
+                query_stage="initial",
+                query_error=str(exc),
             )
         parsed_result, error_message = self._parse_role_result(raw_result)
         if parsed_result is not None:
@@ -140,26 +148,34 @@ class AgentAsToolBridge:
                     method_name=self.config.result_method_name,
                     continue_previous=True,
                     disabled_tools=disabled_tools,
+                    max_tool_rounds=self.config.structured_result_max_tool_rounds,
+                    **query_overrides,
                 )
             except Exception as exc:
-                return RoleTaskResult(
-                    status="needs_follow_up",
-                    summary=(
-                        "Role agent did not submit a structured task result via "
-                        f"{self.config.result_tool_name}.{self.config.result_method_name}."
-                    ),
-                    follow_ups=[
-                        f"Call {self.config.result_tool_name}.{self.config.result_method_name} with status and summary."
-                    ],
-                    metadata={
-                        "query_error": str(exc),
-                        "query_stage": "repair",
-                        "repair_attempt": attempt,
-                    },
+                forced = self._force_structured_submission(
+                    reason=f"Structured repair query failed (attempt {attempt}/{retries}): {exc}",
+                    disabled_tools=disabled_tools,
+                    query_overrides=query_overrides,
+                )
+                if forced is not None:
+                    return forced
+                return self._missing_structured_result(
+                    query_stage="repair",
+                    query_error=str(exc),
+                    repair_attempt=attempt,
                 )
             parsed_result, error_message = self._parse_role_result(raw_result)
             if parsed_result is not None:
                 return parsed_result
+
+        if error_message or raw_result is None:
+            forced = self._force_structured_submission(
+                reason=error_message or "No structured result was submitted.",
+                disabled_tools=disabled_tools,
+                query_overrides=query_overrides,
+            )
+            if forced is not None:
+                return forced
 
         if error_message and raw_result is not None:
             return RoleTaskResult(
@@ -180,19 +196,9 @@ class AgentAsToolBridge:
                     "tool_calls": [call.raw for call in reply.tool_calls],
                 },
             )
-        return RoleTaskResult(
-            status="needs_follow_up",
-            summary=(
-                "Role agent did not submit a structured task result via "
-                f"{self.config.result_tool_name}.{self.config.result_method_name}."
-            ),
-            follow_ups=[
-                "Call the required structured result tool with status and summary.",
-            ],
-            metadata={
-                "raw_message": reply.message,
-                "tool_calls": [call.raw for call in reply.tool_calls],
-            },
+        return self._missing_structured_result(
+            raw_message=reply.message,
+            tool_calls=[call.raw for call in reply.tool_calls],
         )
 
     def _parse_role_result(
@@ -212,7 +218,10 @@ class AgentAsToolBridge:
             f"Reason: {reason}\n"
             f"Attempt: {attempt}/{total}\n"
             "Do not call reply.send_message.\n"
-            "Now call only this tool and method with valid arguments:\n"
+            "Now call only this tool and method with valid arguments.\n"
+            "If native function calling is enabled, call the available function whose name "
+            "ends with '__submit' for the role task result tool.\n"
+            "Tool and method:\n"
             f"- tool: {self.config.result_tool_name}\n"
             f"- method: {self.config.result_method_name}\n"
             "Required fields:\n"
@@ -267,6 +276,8 @@ class AgentAsToolBridge:
             "Execute the task and then call this tool with your structured result:\n"
             f"- tool: {self.config.result_tool_name}\n"
             f"- method: {self.config.result_method_name}\n"
+            "If native function calling is enabled, call the available function whose name "
+            "ends with '__submit' for the role task result tool.\n"
             "Use this schema for arguments:\n"
             "{"
             '"status":"completed|needs_follow_up|blocked|failed",'
@@ -291,3 +302,89 @@ class AgentAsToolBridge:
             "After calling that tool, optionally call reply.send_message with a short human summary.\n"
             f"Task payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
+
+    def _query_overrides(self) -> dict[str, Any]:
+        overrides: dict[str, Any] = {}
+        if self.config.structured_result_max_output_tokens is not None:
+            overrides["max_output_tokens"] = int(self.config.structured_result_max_output_tokens)
+        overrides["parallel_tool_calls"] = bool(self.config.structured_result_parallel_tool_calls)
+        return overrides
+
+    def _missing_structured_result(
+        self,
+        *,
+        query_stage: str | None = None,
+        query_error: str | None = None,
+        repair_attempt: int | None = None,
+        raw_message: str | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+    ) -> RoleTaskResult:
+        metadata: dict[str, Any] = {}
+        if query_stage is not None:
+            metadata["query_stage"] = query_stage
+        if query_error is not None:
+            metadata["query_error"] = query_error
+        if repair_attempt is not None:
+            metadata["repair_attempt"] = repair_attempt
+        if raw_message is not None:
+            metadata["raw_message"] = raw_message
+        if tool_calls is not None:
+            metadata["tool_calls"] = list(tool_calls)
+        return RoleTaskResult(
+            status="needs_follow_up",
+            summary=(
+                "Role agent did not submit a structured task result via "
+                f"{self.config.result_tool_name}.{self.config.result_method_name}."
+            ),
+            follow_ups=[
+                f"Call {self.config.result_tool_name}.{self.config.result_method_name} with status and summary."
+            ],
+            metadata=metadata,
+        )
+
+    def _force_structured_submission(
+        self,
+        *,
+        reason: str,
+        disabled_tools: set[str],
+        query_overrides: dict[str, Any],
+    ) -> RoleTaskResult | None:
+        if not self.config.force_structured_submit_on_failure:
+            return None
+        forced_disabled_tools = {
+            tool.name
+            for tool in self.agent.list_tools()
+            if tool.name != self.config.result_tool_name
+        }
+        forced_disabled_tools.update(disabled_tools)
+        forced_prompt = (
+            "Forced structured close-out.\n"
+            f"Reason: {reason}\n"
+            "You must submit a final structured result now.\n"
+            "No additional exploration is allowed.\n"
+            "Set status to:\n"
+            "- completed: if the task is done.\n"
+            "- needs_follow_up: if specific actions are still needed.\n"
+            "- blocked: only if an external blocker exists.\n"
+            "- failed: only for irrecoverable errors.\n"
+            "Call only the structured result submit tool/function."
+        )
+        try:
+            raw_result, _reply = self.agent.query_structured_tool_result(
+                forced_prompt,
+                tool_name=self.config.result_tool_name,
+                method_name=self.config.result_method_name,
+                continue_previous=True,
+                disabled_tools=forced_disabled_tools,
+                max_tool_rounds=max(1, int(self.config.forced_submit_max_tool_rounds)),
+                **query_overrides,
+            )
+        except Exception:
+            return None
+        parsed_result, _error_message = self._parse_role_result(raw_result)
+        if parsed_result is None:
+            return None
+        parsed_result.metadata = dict(parsed_result.metadata)
+        parsed_result.metadata["forced_structured_submit"] = True
+        parsed_result.metadata["forced_structured_submit_reason"] = reason
+        return parsed_result

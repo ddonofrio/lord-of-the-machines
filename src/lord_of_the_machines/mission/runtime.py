@@ -225,6 +225,7 @@ class MissionRuntime:
                 "context": payload.get("context") if isinstance(payload.get("context"), dict) else {},
                 "constraints": payload.get("constraints") if isinstance(payload.get("constraints"), list) else [],
                 "max_rounds": payload.get("max_rounds") or 1,
+                "continue_previous": bool(payload.get("continue_previous") is True),
                 "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
             }
         )

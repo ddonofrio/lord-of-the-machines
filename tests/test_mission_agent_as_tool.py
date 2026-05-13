@@ -109,6 +109,47 @@ class AgentAsToolBridgeTests(unittest.TestCase):
         self.assertEqual(result.status, "needs_follow_up")
         self.assertIn("did not submit a structured task result", result.summary)
 
+    def test_bridge_forces_structured_submit_after_tool_loop_failure(self) -> None:
+        role_client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "memory",
+                        "method": "recall",
+                        "arguments": {},
+                    }
+                ),
+                tool_output(
+                    {
+                        "tool": "memory",
+                        "method": "recall",
+                        "arguments": {},
+                    }
+                ),
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "needs_follow_up",
+                            "summary": "More implementation is required.",
+                        },
+                    }
+                ),
+            ]
+        )
+        role_agent = BaseAgent.new(client=role_client, rate_limiter=None, max_tool_rounds=1)
+        bridge = AgentAsToolBridge(
+            role_agent,
+            config=AgentAsToolConfig(role_name="software_developer", tool_name="software_developer_agent"),
+        )
+
+        result = bridge.execute_task(RoleTaskRequest(objective="Implement mission task."))
+
+        self.assertEqual(result.status, "needs_follow_up")
+        self.assertEqual(result.summary, "More implementation is required.")
+        self.assertTrue(result.metadata.get("forced_structured_submit"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -185,6 +185,42 @@ class MissionRuntimeTests(unittest.TestCase):
         ]
         self.assertIn("Required changes:", mission["phase_notes"]["product_direction"])
 
+    def test_follow_up_second_execution_uses_continue_previous(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_followup_continue_previous",
+                "title": "Follow-Up Continue Previous",
+                "description": "Second follow-up run should preserve prior model context.",
+            }
+        )
+
+        class TwoStepExecutor:
+            def __init__(self) -> None:
+                self.calls: list[RoleTaskRequest] = []
+
+            def execute_task(self, request: RoleTaskRequest) -> RoleTaskResult:
+                self.calls.append(request)
+                if len(self.calls) == 1:
+                    return RoleTaskResult(status="needs_follow_up", summary="Need another round.")
+                return RoleTaskResult(status="completed", summary="Done.")
+
+        executor = TwoStepExecutor()
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_director": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.seed_pending_missions()
+        runtime.run_once()
+        runtime.run_once()
+
+        self.assertEqual(len(executor.calls), 2)
+        self.assertFalse(executor.calls[0].continue_previous)
+        self.assertTrue(executor.calls[1].continue_previous)
+
     def test_contract_violation_forces_follow_up(self) -> None:
         self.mission_registry.handlers()["create_mission"](
             {
