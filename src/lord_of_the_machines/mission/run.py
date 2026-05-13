@@ -22,6 +22,7 @@ from lord_of_the_machines.mission import (
     MissionRuntimeConfig,
     MeetingToolAgent,
     RoleAgentFactory,
+    RoleAgentFactoryConfig,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
     install_read_only_software_workspace_tool,
@@ -80,9 +81,16 @@ def build_default_runner(
     diagnostics_profiles: tuple[str, ...],
     diagnostics_timeout_seconds: int,
     allowed_write_prefixes: tuple[str, ...],
+    tool_calling_mode: str,
 ) -> MissionRunner:
     mission_registry, event_bus, artifact_registry = create_storage_tools(state_dir)
-    factory = RoleAgentFactory()
+    factory = RoleAgentFactory(
+        config=RoleAgentFactoryConfig(
+            base_overrides={
+                "tool_calling_mode": tool_calling_mode,
+            }
+        )
+    )
 
     product_director_agent = factory.create("product_director", max_tool_rounds=10)
     product_manager_agent = factory.create("product_manager", max_tool_rounds=10)
@@ -195,6 +203,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ],
     )
     parser.add_argument("--bootstrap-only", action="store_true")
+    parser.add_argument(
+        "--tool-calling-mode",
+        choices=["protocol", "openai_native"],
+        default="openai_native",
+    )
     parser.add_argument("--reset-state", action="store_true")
     parser.add_argument("--require-all-completed", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -250,6 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     diagnostics_profiles=tuple(str(item) for item in args.diagnostics_profile),
                     diagnostics_timeout_seconds=args.diagnostics_timeout,
                     allowed_write_prefixes=tuple(str(item) for item in args.allow_write_prefix),
+                    tool_calling_mode=str(args.tool_calling_mode),
                 )
                 result = runner.run()
         except MissingApiKeyError as exc:
