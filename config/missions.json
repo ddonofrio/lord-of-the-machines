@@ -1,58 +1,55 @@
 {
   "missions": [
     {
-      "mission_id": "mvp_agent_voice_prioritization",
-      "title": "The Voice of the Agents: Capability Vote and Next Priority Mission",
-      "description": "Run a structured capability vote across all active roles. The software developer must collect one-by-one input from each role, document what they need most, and create a follow-up mission for the highest-priority improvement.",
+      "mission_id": "mvp_create_qa_agent",
+      "title": "Create And Integrate QA Agent",
+      "description": "Lord of the Machines currently does not have a QA agent role. Implement and integrate a QA agent into the mission workflow, including role prompt, runtime phase support, runner wiring, and baseline tests.",
       "metadata": {
-        "goal": "Use cross-role feedback to decide the most urgent next capability for the autonomous system",
-        "initial_hypotheses": [
-          "Introduce a dedicated QA role and workflow.",
-          "Introduce a Kanban board to track planned, in-progress, and done tasks.",
-          "Adopt stronger Git-based project/ticket workflow and make push readiness a priority."
-        ],
+        "goal": "Add a dedicated QA capability to improve delivery reliability and verification quality.",
         "workflow_constraints": [
-          "The software_developer is the owner of this mission output.",
-          "The software_developer must call roles one by one and gather notes from each role individually.",
-          "No combined summary is valid unless each role has a dedicated contribution section.",
-          "All role feedback must be traceable in the final document."
+          "Implement real code changes; do not stop at planning.",
+          "Keep changes scoped to mission/runtime/prompting/runner wiring and tests.",
+          "Do not remove existing role behavior unless replacing it intentionally with QA integration.",
+          "Run local tests for touched mission modules."
         ],
         "deliverables": [
           {
-            "type": "documentation",
-            "path": "docs/voice-of-the-agents.md",
-            "description": "Role-by-role notes, capability proposals, rationale, urgency ranking, and recommended next action."
+            "type": "code",
+            "description": "QA role prompt and role profile are added."
           },
           {
-            "type": "mission_update",
-            "path": "config/missions.json",
-            "description": "Add a new follow-up mission that implements the highest-urgency capability identified in docs/voice-of-the-agents.md."
+            "type": "code",
+            "description": "Mission runtime phase mapping and transitions include QA phase integration."
+          },
+          {
+            "type": "code",
+            "description": "Mission runner creates and wires a QA role executor."
+          },
+          {
+            "type": "tests",
+            "description": "Tests updated or added to validate QA integration."
+          },
+          {
+            "type": "documentation",
+            "path": "docs/qa-agent-integration.md",
+            "description": "Document what was implemented, where, and how QA fits in the workflow."
           }
         ],
-        "documentation_requirements": [
-          "Include consulted roles and timestamped notes per role.",
-          "Include a voting table with capability, supporting roles, urgency, impact, and confidence.",
-          "Include a final recommendation section with the top priority and why it won.",
-          "Include a proposed mission_id, title, description, and acceptance criteria for the follow-up mission."
-        ],
         "acceptance_checks": {
-          "documentation_file": "docs/voice-of-the-agents.md",
+          "documentation_file": "docs/qa-agent-integration.md",
           "required_role_mentions": [
-            "product_director",
-            "product_manager",
-            "software_architect",
+            "qa_agent",
+            "software_developer",
             "software_development_manager",
-            "software_developer"
-          ],
-          "follow_up_mission_file": "config/missions.json",
-          "minimum_missions_in_follow_up_file": 2,
-          "require_distinct_follow_up_mission": true
+            "software_architect"
+          ]
         },
         "acceptance_criteria": [
-          "Every active role available in the runtime has a dedicated documented contribution.",
-          "docs/voice-of-the-agents.md exists and contains role notes plus a prioritized decision.",
-          "A new mission is added to config/missions.json to implement the selected top priority.",
-          "The follow-up mission is concrete enough to be executed without re-interviewing roles."
+          "A QA agent role exists in prompts and can be created by the role factory.",
+          "Mission runtime flow includes a QA phase and role mapping.",
+          "Mission runner wiring includes QA agent executor.",
+          "Touched tests pass.",
+          "docs/qa-agent-integration.md explains the implementation."
         ]
       }
     }
