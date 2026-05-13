@@ -247,6 +247,40 @@ class MissionRuntimeTests(unittest.TestCase):
         self.assertEqual(len(follow_up_events), 2)
         self.assertEqual(follow_up_events[-1]["payload"]["round"], 2)
 
+    def test_repeated_follow_up_summary_marks_phase_incomplete(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_stalled_follow_up",
+                "title": "Stalled Follow-Up",
+                "description": "Detect repeated follow-up outputs and stop looping in the same run.",
+            }
+        )
+        repeated_summary = "Need more time to inspect files."
+        executor = FakeRoleExecutor(RoleTaskResult(status="needs_follow_up", summary=repeated_summary))
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_director": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=6, phase_transitions={}),
+        )
+
+        runtime.seed_pending_missions()
+        first_pass = runtime.run_once()
+        second_pass = runtime.run_once()
+        third_pass = runtime.run_once()
+
+        self.assertEqual(first_pass["processed"][0]["outcome"]["status"], "needs_follow_up")
+        self.assertEqual(second_pass["processed"][0]["outcome"]["status"], "needs_follow_up")
+        self.assertEqual(third_pass["processed"][0]["outcome"]["status"], "incomplete")
+        self.assertEqual(third_pass["processed"][0]["outcome"]["reason"], "stalled_follow_up_loop")
+
+        mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_stalled_follow_up"})[
+            "mission"
+        ]
+        self.assertEqual(mission["status"], "incomplete")
+        self.assertEqual(mission["phase_status"]["product_direction"], "in_progress")
+
     def test_completed_phase_schedules_next_phase_when_transition_exists(self) -> None:
         self.mission_registry.handlers()["create_mission"](
             {

@@ -26,6 +26,7 @@ MAX_FOLLOW_UP_ITEM_CHARS = 300
 MAX_FOLLOW_UP_ITEMS = 8
 MAX_FOLLOW_UP_HISTORY = 2
 MAX_ARTIFACT_CONTEXT_CONTENT_CHARS = 6_000
+MAX_STALE_FOLLOW_UP_REPEAT_COUNT = 2
 
 
 class RoleExecutor(Protocol):
@@ -423,6 +424,64 @@ class MissionRuntime:
             )
             follow_up_context = dict(request.context) if isinstance(request.context, dict) else {}
             follow_up_history = list(follow_up_context.get("follow_up_history") or [])
+            previous_summary = ""
+            if follow_up_history:
+                previous_entry = follow_up_history[-1]
+                if isinstance(previous_entry, dict):
+                    previous_summary = str(previous_entry.get("summary") or "").strip()
+            stale_repeat_count = int(follow_up_context.get("stale_follow_up_repeat_count") or 0)
+            if previous_summary and previous_summary == result_summary:
+                stale_repeat_count += 1
+            else:
+                stale_repeat_count = 0
+            if stale_repeat_count >= MAX_STALE_FOLLOW_UP_REPEAT_COUNT:
+                self._mission["update_mission_phase"](
+                    {
+                        "mission_id": mission_id,
+                        "phase": phase,
+                        "status": "in_progress",
+                        "notes": (
+                            f"{note_with_limit}\n\n"
+                            "Follow-up stalled with repeated outputs; mission is marked as incomplete for this run."
+                        ).strip(),
+                    }
+                )
+                self._mission["update_mission_status"](
+                    {
+                        "mission_id": mission_id,
+                        "status": "incomplete",
+                        "reason": f"Phase '{phase}' stalled with repeated follow-up outputs.",
+                    }
+                )
+                log_json(
+                    self._logger,
+                    "mission_runtime.phase_incomplete.stalled_follow_up",
+                    {
+                        "mission_id": mission_id,
+                        "phase": phase,
+                        "role": role,
+                        "round": round_number,
+                        "summary": result_summary,
+                        "stale_repeat_count": stale_repeat_count,
+                    },
+                )
+                log_timeline(
+                    actor=self.config.consumer_id,
+                    action="phase incomplete (stalled follow-up)",
+                    mission_id=mission_id,
+                    phase=phase,
+                    details={
+                        "role": role,
+                        "round": round_number,
+                        "summary": result_summary,
+                        "stale_repeat_count": stale_repeat_count,
+                    },
+                )
+                return {
+                    "status": "incomplete",
+                    "reason": "stalled_follow_up_loop",
+                    "summary": result_summary,
+                }
             follow_up_feedback = {
                 "round": round_number,
                 "summary": result_summary,
@@ -433,6 +492,7 @@ class MissionRuntime:
             follow_up_history.append(follow_up_feedback)
             follow_up_context["follow_up_history"] = follow_up_history[-MAX_FOLLOW_UP_HISTORY:]
             follow_up_context["follow_up_feedback"] = follow_up_feedback
+            follow_up_context["stale_follow_up_repeat_count"] = stale_repeat_count
             follow_up_payload = {
                 "phase": phase,
                 "role": role,

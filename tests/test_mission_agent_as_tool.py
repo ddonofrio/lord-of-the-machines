@@ -150,6 +150,32 @@ class AgentAsToolBridgeTests(unittest.TestCase):
         self.assertEqual(result.summary, "More implementation is required.")
         self.assertTrue(result.metadata.get("forced_structured_submit"))
 
+    def test_bridge_normalizes_recoverable_failed_status_to_follow_up(self) -> None:
+        role_client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "failed",
+                            "summary": "Maximum tool rounds reached before producing a reply.",
+                        },
+                    }
+                )
+            ]
+        )
+        role_agent = BaseAgent.new(client=role_client, rate_limiter=None)
+        bridge = AgentAsToolBridge(
+            role_agent,
+            config=AgentAsToolConfig(role_name="software_architect", tool_name="software_architect_agent"),
+        )
+
+        result = bridge.execute_task(RoleTaskRequest(objective="Produce technical design."))
+
+        self.assertEqual(result.status, "needs_follow_up")
+        self.assertTrue(result.metadata.get("normalized_from_failed"))
+
 
 if __name__ == "__main__":
     unittest.main()

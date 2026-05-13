@@ -132,7 +132,7 @@ class AgentAsToolBridge:
             )
         parsed_result, error_message = self._parse_role_result(raw_result)
         if parsed_result is not None:
-            return parsed_result
+            return self._normalize_recoverable_failure(parsed_result)
 
         retries = max(0, int(self.config.structured_result_retries))
         for attempt in range(1, retries + 1):
@@ -166,7 +166,7 @@ class AgentAsToolBridge:
                 )
             parsed_result, error_message = self._parse_role_result(raw_result)
             if parsed_result is not None:
-                return parsed_result
+                return self._normalize_recoverable_failure(parsed_result)
 
         if error_message or raw_result is None:
             forced = self._force_structured_submission(
@@ -384,7 +384,37 @@ class AgentAsToolBridge:
         parsed_result, _error_message = self._parse_role_result(raw_result)
         if parsed_result is None:
             return None
+        parsed_result = self._normalize_recoverable_failure(parsed_result)
         parsed_result.metadata = dict(parsed_result.metadata)
         parsed_result.metadata["forced_structured_submit"] = True
         parsed_result.metadata["forced_structured_submit_reason"] = reason
         return parsed_result
+
+    def _normalize_recoverable_failure(self, result: RoleTaskResult) -> RoleTaskResult:
+        if result.status != "failed":
+            return result
+        summary = (result.summary or "").strip()
+        summary_lower = summary.lower()
+        recoverable_signals = (
+            "maximum tool rounds",
+            "without producing a reply",
+            "request too large",
+            "rate limit",
+            "context window",
+            "initial structured query failed",
+            "no additional exploration",
+        )
+        if not any(signal in summary_lower for signal in recoverable_signals):
+            return result
+        result.status = "needs_follow_up"
+        if not summary:
+            result.summary = "Recoverable execution limit reached. Follow-up is required."
+        result.required_changes = list(result.required_changes) + [
+            "Continue from current workspace state and complete the phase with scoped edits."
+        ]
+        result.follow_ups = list(result.follow_ups) + [
+            "Prioritize required deliverables and submit _role_task_result.submit when complete."
+        ]
+        result.metadata = dict(result.metadata)
+        result.metadata["normalized_from_failed"] = True
+        return result
