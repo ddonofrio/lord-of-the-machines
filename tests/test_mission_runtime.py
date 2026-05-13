@@ -360,6 +360,51 @@ class MissionRuntimeTests(unittest.TestCase):
         self.assertEqual(seeded["seeded_events"][0]["payload"]["phase"], "product_requirements")
         self.assertEqual(seeded["seeded_events"][0]["payload"]["role"], "product_manager")
 
+    def test_seed_pending_missions_resumes_failed_phase_without_pending_event(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_resume_failed",
+                "title": "Resume Failed",
+                "description": "Retry failed phase on next run.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_resume_failed",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "Done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_resume_failed",
+                "phase": "product_requirements",
+                "status": "failed",
+                "notes": "Transient failure",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_resume_failed",
+                "status": "in_progress",
+                "reason": "Should retry failed phase.",
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={},
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        seeded = runtime.seed_pending_missions()
+
+        self.assertEqual(len(seeded["seeded_events"]), 1)
+        self.assertEqual(seeded["seeded_events"][0]["payload"]["phase"], "product_requirements")
+        self.assertEqual(seeded["seeded_events"][0]["payload"]["role"], "product_manager")
+
     def test_seed_pending_missions_includes_resume_context_and_previous_artifact(self) -> None:
         self.mission_registry.handlers()["create_mission"](
             {

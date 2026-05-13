@@ -397,7 +397,9 @@ class AgentAsToolBridge:
         summary_lower = summary.lower()
         recoverable_signals = (
             "maximum tool rounds",
+            "tool rounds",
             "without producing a reply",
+            "before providing a reply",
             "request too large",
             "rate limit",
             "context window",

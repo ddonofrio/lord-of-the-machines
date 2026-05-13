@@ -857,7 +857,7 @@ class MissionRuntime:
             return None
 
         ordered_phases = list(self.config.phase_roles.keys())
-        active_statuses = {"requested", "in_progress", "needs_follow_up"}
+        active_statuses = {"requested", "in_progress", "needs_follow_up", "failed"}
         for phase in ordered_phases:
             status = str(phase_status.get(phase) or "").strip().lower()
             if status in active_statuses:

@@ -176,6 +176,35 @@ class AgentAsToolBridgeTests(unittest.TestCase):
         self.assertEqual(result.status, "needs_follow_up")
         self.assertTrue(result.metadata.get("normalized_from_failed"))
 
+    def test_bridge_normalizes_failed_with_allowed_tool_rounds_phrase(self) -> None:
+        role_client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "failed",
+                            "summary": (
+                                "Unable to complete the technical design due to exceeding the maximum allowed "
+                                "tool rounds before providing a reply."
+                            ),
+                        },
+                    }
+                )
+            ]
+        )
+        role_agent = BaseAgent.new(client=role_client, rate_limiter=None)
+        bridge = AgentAsToolBridge(
+            role_agent,
+            config=AgentAsToolConfig(role_name="software_architect", tool_name="software_architect_agent"),
+        )
+
+        result = bridge.execute_task(RoleTaskRequest(objective="Produce technical design."))
+
+        self.assertEqual(result.status, "needs_follow_up")
+        self.assertTrue(result.metadata.get("normalized_from_failed"))
+
 
 if __name__ == "__main__":
     unittest.main()
