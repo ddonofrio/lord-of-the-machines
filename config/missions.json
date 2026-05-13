@@ -6,11 +6,21 @@
       "description": "Lord of the Machines currently does not have a QA agent role. Implement and integrate a QA agent into the mission workflow, including role prompt, runtime phase support, runner wiring, and baseline tests.",
       "metadata": {
         "goal": "Add a dedicated QA capability to improve delivery reliability and verification quality.",
+        "decision_defaults": {
+          "qa_phase_skip_policy": "QA phase is mandatory by default. It can be skipped only for emergency hotfixes or missions with no code changes, and the skip reason must be explicitly documented.",
+          "qa_agent_mvp_responsibilities": [
+            "Run required diagnostics/test profiles for changed code.",
+            "Validate mission acceptance criteria and required artifacts.",
+            "Verify no critical unresolved issues remain before completion.",
+            "Publish a QA verification summary with pass/fail evidence."
+          ]
+        },
         "workflow_constraints": [
           "Implement real code changes; do not stop at planning.",
           "Keep changes scoped to mission/runtime/prompting/runner wiring and tests.",
           "Do not remove existing role behavior unless replacing it intentionally with QA integration.",
-          "Run local tests for touched mission modules."
+          "Run local tests for touched mission modules.",
+          "Decision defaults in metadata are already approved and must be applied directly; do not open extra follow-up loops for those points."
         ],
         "deliverables": [
           {
@@ -37,6 +47,21 @@
         ],
         "acceptance_checks": {
           "documentation_file": "docs/qa-agent-integration.md",
+          "required_files": [
+            "docs/qa-agent-integration.md"
+          ],
+          "required_file_contains": {
+            "src/lord_of_the_machines/mission/prompting.py": [
+              "\"qa_agent\":"
+            ],
+            "src/lord_of_the_machines/mission/runtime.py": [
+              "\"qa\": \"qa_agent\"",
+              "\"implementation\": \"qa\""
+            ],
+            "src/lord_of_the_machines/mission/run.py": [
+              "\"qa_agent\":"
+            ]
+          },
           "required_role_mentions": [
             "qa_agent",
             "software_developer",

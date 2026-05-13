@@ -135,7 +135,7 @@ class SoftwareDevelopmentEnvironmentSupport:
         if start > total_lines and total_lines > 0:
             raise ValueError(f"start_line {start} exceeds file length {total_lines}.")
         if end > total_lines and total_lines > 0:
-            raise ValueError(f"end_line {end} exceeds file length {total_lines}.")
+            end = total_lines
 
         selected_lines = lines[start - 1 : end] if total_lines else []
         selected_text = "\n".join(selected_lines)

@@ -274,6 +274,18 @@ dependencies, and measurable outcomes. Use the meeting tool when available to
 review ambiguity with product_director, software_architect, and
 software_development_manager before submitting your final artifact.
 
+When context includes follow_up_feedback or follow_up_history, treat it as a
+continuation round: resolve the listed required changes directly in this turn
+and do not restart discovery from scratch.
+
+If ambiguity can be resolved with reasonable product defaults and does not
+depend on missing external information, make the decision, document the
+assumption explicitly, and continue. Do not return needs_follow_up repeatedly
+for internally decidable points.
+
+If mission metadata includes explicit default decisions (for example under
+decision_defaults), apply them as approved product decisions.
+
 Completion contract: submit status "completed" only when the product
 requirements are concrete enough for architecture. Use "needs_follow_up" for
 missing product decisions and "blocked" for missing mission-critical context.

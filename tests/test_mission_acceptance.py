@@ -79,6 +79,32 @@ class MissionAcceptanceTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_required_file_checks_report_missing_files(self) -> None:
+        checks = MissionAcceptanceChecks(
+            required_files=("docs/qa-agent-integration.md",),
+        )
+        errors = evaluate_mission_acceptance_checks(
+            checks=checks,
+            workspace_root=self.root,
+            mission_id="mvp_qa",
+        )
+        self.assertIn("required file does not exist: docs/qa-agent-integration.md", errors)
+
+    def test_required_file_contains_checks(self) -> None:
+        target = self.root / "config" / "example.py"
+        target.write_text("ROLE_PROMPTS = {'qa_agent': 'ok'}\n", encoding="utf-8")
+        checks = MissionAcceptanceChecks(
+            required_file_contains={
+                "config/example.py": ("qa_agent", "ROLE_PROMPTS"),
+            }
+        )
+        errors = evaluate_mission_acceptance_checks(
+            checks=checks,
+            workspace_root=self.root,
+            mission_id="mvp_qa",
+        )
+        self.assertEqual(errors, [])
+
 
 if __name__ == "__main__":
     unittest.main()

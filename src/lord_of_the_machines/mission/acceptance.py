@@ -10,6 +10,8 @@ from typing import Any
 class MissionAcceptanceChecks:
     documentation_file: str | None = None
     required_role_mentions: tuple[str, ...] = ()
+    required_files: tuple[str, ...] = ()
+    required_file_contains: dict[str, tuple[str, ...]] | None = None
     follow_up_mission_file: str | None = None
     minimum_missions_in_follow_up_file: int = 0
     require_distinct_follow_up_mission: bool = False
@@ -27,6 +29,8 @@ class MissionAcceptanceChecks:
         documentation_file = _optional_string(raw, "documentation_file")
         follow_up_mission_file = _optional_string(raw, "follow_up_mission_file")
         required_role_mentions = tuple(_optional_string_list(raw, "required_role_mentions"))
+        required_files = tuple(_optional_string_list(raw, "required_files"))
+        required_file_contains = _optional_required_file_contains(raw, "required_file_contains")
         minimum_missions = raw.get("minimum_missions_in_follow_up_file")
         if minimum_missions is None:
             minimum_missions_int = 0
@@ -46,6 +50,8 @@ class MissionAcceptanceChecks:
         checks = cls(
             documentation_file=documentation_file,
             required_role_mentions=required_role_mentions,
+            required_files=required_files,
+            required_file_contains=required_file_contains,
             follow_up_mission_file=follow_up_mission_file,
             minimum_missions_in_follow_up_file=minimum_missions_int,
             require_distinct_follow_up_mission=require_distinct_bool,
@@ -54,6 +60,8 @@ class MissionAcceptanceChecks:
             [
                 checks.documentation_file,
                 checks.required_role_mentions,
+                checks.required_files,
+                checks.required_file_contains,
                 checks.follow_up_mission_file,
                 checks.minimum_missions_in_follow_up_file > 0,
                 checks.require_distinct_follow_up_mission,
@@ -95,6 +103,26 @@ def evaluate_mission_acceptance_checks(
             if missing_roles:
                 errors.append(
                     "documentation is missing required role mentions: " + ", ".join(sorted(missing_roles))
+                )
+
+    if checks.required_files:
+        for relative_path in checks.required_files:
+            required_path = _safe_workspace_path(workspace_root, relative_path)
+            if not required_path.exists():
+                errors.append(f"required file does not exist: {relative_path}")
+
+    if checks.required_file_contains:
+        for relative_path, required_snippets in checks.required_file_contains.items():
+            required_path = _safe_workspace_path(workspace_root, relative_path)
+            if not required_path.exists():
+                errors.append(f"required file for content check does not exist: {relative_path}")
+                continue
+            text = required_path.read_text(encoding="utf-8")
+            missing_snippets = [snippet for snippet in required_snippets if snippet not in text]
+            if missing_snippets:
+                errors.append(
+                    f"required content missing in {relative_path}: "
+                    + ", ".join(repr(item) for item in missing_snippets)
                 )
 
     if checks.follow_up_mission_file:
@@ -173,3 +201,27 @@ def _optional_string_list(values: dict[str, Any], field_name: str) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise ValueError(f"{field_name} must be a list of non-empty strings.")
     return list(value)
+
+
+def _optional_required_file_contains(
+    values: dict[str, Any],
+    field_name: str,
+) -> dict[str, tuple[str, ...]] | None:
+    value = values.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object mapping file path to required snippets.")
+    result: dict[str, tuple[str, ...]] = {}
+    for raw_path, raw_snippets in value.items():
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            raise ValueError(f"{field_name} keys must be non-empty strings.")
+        if not isinstance(raw_snippets, list) or not raw_snippets:
+            raise ValueError(f"{field_name}[{raw_path!r}] must be a non-empty list of strings.")
+        snippets: list[str] = []
+        for raw_snippet in raw_snippets:
+            if not isinstance(raw_snippet, str) or not raw_snippet:
+                raise ValueError(f"{field_name}[{raw_path!r}] entries must be non-empty strings.")
+            snippets.append(raw_snippet)
+        result[raw_path] = tuple(snippets)
+    return result

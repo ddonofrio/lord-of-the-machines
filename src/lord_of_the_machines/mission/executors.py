@@ -189,12 +189,17 @@ class SoftwareDeveloperRoleExecutor:
                 "Use the safest edit method possible: prefer replace_text/replace_lines/insert_text on existing files.",
                 "Do not overwrite entire existing files unless intentionally rewriting all content.",
                 "If you must do a large rewrite, set allow_large_rewrite=true explicitly and explain why in the summary.",
+                "If a suggested target file does not exist, create it in an allowed write prefix or adapt the nearest existing module.",
+                "Do not report blocked due missing files unless list_tree over allowed prefixes proves there are zero writable project files.",
             ],
             max_rounds=request.max_rounds,
             continue_previous=request.continue_previous,
             metadata=dict(request.metadata),
         )
         result = self._base.execute_task(constrained_request)
+        corrected_result = self._correct_false_workspace_block(result)
+        if corrected_result is not None:
+            return corrected_result
         if result.status != STATUS_COMPLETED:
             return result
 
@@ -278,6 +283,55 @@ class SoftwareDeveloperRoleExecutor:
             result.artifact_format = "markdown"
             result.artifact_content = self._build_artifact_content(changed_paths, diagnostics)
         return result
+
+    def _correct_false_workspace_block(self, result: RoleTaskResult) -> RoleTaskResult | None:
+        if result.status not in {STATUS_BLOCKED, STATUS_NEEDS_FOLLOW_UP}:
+            return None
+        summary = (result.summary or "").lower()
+        workspace_missing_signals = (
+            "no writable source files",
+            "required deliverables",
+            "not found in the workspace",
+            "ensure the project files exist",
+            "source files are present and unlocked",
+        )
+        if not any(signal in summary for signal in workspace_missing_signals):
+            return None
+        existing_targets = self._existing_allowed_write_targets()
+        if not existing_targets:
+            return None
+        return RoleTaskResult(
+            status=STATUS_NEEDS_FOLLOW_UP,
+            summary=(
+                "Workspace is available and writable under allowed prefixes. "
+                "Continue implementation: edit existing modules and create missing files when required."
+            ),
+            required_changes=[
+                "Implement QA integration changes directly in available mission modules.",
+                "Create missing deliverables (for example docs/qa-agent-integration.md) instead of blocking.",
+                "Run required diagnostics and resubmit a structured completed result when done.",
+            ],
+            follow_ups=[
+                "Use list_tree and find_files to choose concrete targets in allowed prefixes.",
+                "Apply write_file/replace_text/replace_lines/insert_text and verify list_changes reports edits.",
+            ],
+            metadata={
+                "corrected_false_workspace_block": True,
+                "existing_allowed_targets": existing_targets,
+                "original_result": result.to_mapping(),
+            },
+        )
+
+    def _existing_allowed_write_targets(self) -> list[str]:
+        targets: list[str] = []
+        for prefix in self.config.allowed_write_prefixes:
+            raw = prefix.strip()
+            if not raw:
+                continue
+            candidate = (self.config.workspace_root / raw).resolve()
+            if candidate.exists():
+                targets.append(raw.replace("\\", "/"))
+        return targets
 
     def _is_allowed_path(self, path: str) -> bool:
         normalized = path.replace("\\", "/")

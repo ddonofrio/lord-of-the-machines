@@ -20,6 +20,13 @@ from lord_of_the_machines.mission.events import (
 )
 from lord_of_the_machines.runtime import get_logger, log_json, log_timeline
 
+MAX_PHASE_NOTE_CHARS = 1_500
+MAX_FOLLOW_UP_SUMMARY_CHARS = 1_200
+MAX_FOLLOW_UP_ITEM_CHARS = 300
+MAX_FOLLOW_UP_ITEMS = 8
+MAX_FOLLOW_UP_HISTORY = 2
+MAX_ARTIFACT_CONTEXT_CONTENT_CHARS = 6_000
+
 
 class RoleExecutor(Protocol):
     def execute_task(self, request: RoleTaskRequest) -> RoleTaskResult | dict[str, Any]:
@@ -300,19 +307,20 @@ class MissionRuntime:
         round_number: int,
     ) -> dict[str, Any]:
         if result.status == STATUS_COMPLETED:
+            phase_summary = self._trim_text(result.summary, MAX_PHASE_NOTE_CHARS)
             self._mission["update_mission_phase"](
                 {
                     "mission_id": mission_id,
                     "phase": phase,
                     "status": "completed",
-                    "notes": result.summary,
+                    "notes": phase_summary,
                 }
             )
             self._publish_phase_completed_event(
                 mission_id=mission_id,
                 phase=phase,
                 role=role,
-                summary=result.summary,
+                summary=phase_summary,
             )
             artifact = self._publish_artifact_if_present(
                 mission_id=mission_id,
@@ -334,7 +342,7 @@ class MissionRuntime:
                     "mission_id": mission_id,
                     "phase": phase,
                     "role": role,
-                    "summary": result.summary,
+                    "summary": phase_summary,
                     "has_artifact": artifact is not None,
                     "next_phase_scheduled": next_phase_event is not None,
                 },
@@ -346,7 +354,7 @@ class MissionRuntime:
                 phase=phase,
                 details={
                     "role": role,
-                    "summary": result.summary,
+                    "summary": phase_summary,
                     "artifact_published": artifact is not None,
                     "next_phase_scheduled": next_phase_event is not None,
                 },
@@ -355,6 +363,8 @@ class MissionRuntime:
 
         if result.status == STATUS_NEEDS_FOLLOW_UP:
             phase_note = self._follow_up_phase_note(result=result, round_number=round_number)
+            note_with_limit = self._trim_text(phase_note, MAX_PHASE_NOTE_CHARS)
+            result_summary = self._trim_text(result.summary, MAX_FOLLOW_UP_SUMMARY_CHARS)
             if round_number >= self.config.max_follow_up_rounds:
                 self._mission["update_mission_phase"](
                     {
@@ -362,7 +372,7 @@ class MissionRuntime:
                         "phase": phase,
                         "status": "in_progress",
                         "notes": (
-                            f"{phase_note}\n\n"
+                            f"{note_with_limit}\n\n"
                             "Follow-up round limit reached for this run; mission is marked as incomplete."
                         ).strip(),
                     }
@@ -382,7 +392,7 @@ class MissionRuntime:
                         "phase": phase,
                         "role": role,
                         "round": round_number,
-                        "summary": result.summary,
+                        "summary": result_summary,
                     },
                 )
                 log_timeline(
@@ -393,13 +403,13 @@ class MissionRuntime:
                     details={
                         "role": role,
                         "round": round_number,
-                        "summary": result.summary,
+                        "summary": result_summary,
                     },
                 )
                 return {
                     "status": "incomplete",
                     "reason": "follow_up_round_limit",
-                    "summary": result.summary,
+                    "summary": result_summary,
                 }
 
             self._mission["update_mission_phase"](
@@ -407,20 +417,20 @@ class MissionRuntime:
                     "mission_id": mission_id,
                     "phase": phase,
                     "status": "in_progress",
-                    "notes": phase_note,
+                    "notes": note_with_limit,
                 }
             )
             follow_up_context = dict(request.context) if isinstance(request.context, dict) else {}
             follow_up_history = list(follow_up_context.get("follow_up_history") or [])
             follow_up_feedback = {
                 "round": round_number,
-                "summary": result.summary,
-                "required_changes": list(result.required_changes),
-                "unresolved_questions": list(result.unresolved_questions),
-                "follow_ups": list(result.follow_ups),
+                "summary": result_summary,
+                "required_changes": self._trim_list(result.required_changes),
+                "unresolved_questions": self._trim_list(result.unresolved_questions),
+                "follow_ups": self._trim_list(result.follow_ups),
             }
             follow_up_history.append(follow_up_feedback)
-            follow_up_context["follow_up_history"] = follow_up_history[-3:]
+            follow_up_context["follow_up_history"] = follow_up_history[-MAX_FOLLOW_UP_HISTORY:]
             follow_up_context["follow_up_feedback"] = follow_up_feedback
             follow_up_payload = {
                 "phase": phase,
@@ -449,7 +459,7 @@ class MissionRuntime:
                     "phase": phase,
                     "role": role,
                     "next_round": round_number + 1,
-                    "summary": result.summary,
+                    "summary": result_summary,
                 },
             )
             log_timeline(
@@ -460,35 +470,36 @@ class MissionRuntime:
                 details={
                     "role": role,
                     "next_round": round_number + 1,
-                    "summary": result.summary,
+                    "summary": result_summary,
                 },
             )
             return {
                 "status": STATUS_NEEDS_FOLLOW_UP,
                 "round": round_number + 1,
-                "summary": result.summary,
+                "summary": result_summary,
             }
 
+        phase_summary = self._trim_text(result.summary, MAX_PHASE_NOTE_CHARS)
         self._mission["update_mission_phase"](
             {
                 "mission_id": mission_id,
                 "phase": phase,
                 "status": result.status,
-                "notes": result.summary,
+                "notes": phase_summary,
             }
         )
         self._mission["update_mission_status"](
             {
                 "mission_id": mission_id,
                 "status": "blocked" if result.status == STATUS_BLOCKED else "in_progress",
-                "reason": result.summary or f"Phase '{phase}' ended with status '{result.status}'.",
+                "reason": phase_summary or f"Phase '{phase}' ended with status '{result.status}'.",
             }
         )
         self._publish_phase_failed_event(
             mission_id=mission_id,
             phase=phase,
             role=role,
-            summary=result.summary or f"Phase returned status '{result.status}'.",
+            summary=phase_summary or f"Phase returned status '{result.status}'.",
         )
         log_json(
             self._logger,
@@ -498,7 +509,7 @@ class MissionRuntime:
                 "phase": phase,
                 "role": role,
                 "status": result.status,
-                "summary": result.summary,
+                "summary": phase_summary,
             },
         )
         log_timeline(
@@ -509,10 +520,10 @@ class MissionRuntime:
             details={
                 "role": role,
                 "status": result.status,
-                "summary": result.summary,
+                "summary": phase_summary,
             },
         )
-        return {"status": result.status, "summary": result.summary}
+        return {"status": result.status, "summary": phase_summary}
 
     def _publish_artifact_if_present(
         self,
@@ -655,12 +666,20 @@ class MissionRuntime:
     def _artifact_context(self, artifact: dict[str, Any] | None) -> dict[str, Any] | None:
         if not artifact:
             return None
+        content = str(artifact.get("content") or "")
+        truncated = len(content) > MAX_ARTIFACT_CONTEXT_CONTENT_CHARS
+        if truncated:
+            content = (
+                content[:MAX_ARTIFACT_CONTEXT_CONTENT_CHARS]
+                + "\n\n...[artifact content truncated by runtime context budget]..."
+            )
         return {
             "artifact_id": artifact.get("artifact_id"),
             "artifact_type": artifact.get("artifact_type"),
             "title": artifact.get("title"),
             "format": artifact.get("format"),
-            "content": artifact.get("content"),
+            "content": content,
+            "content_truncated": truncated,
             "producer_role": artifact.get("producer_role"),
         }
 
@@ -675,10 +694,13 @@ class MissionRuntime:
             "mission_description": mission.get("description"),
             "metadata": mission.get("metadata") or {},
             "phase_status": phase_status,
-            "phase_notes": phase_notes,
+            "phase_notes": {
+                phase_name: self._trim_text(str(note or ""), MAX_PHASE_NOTE_CHARS)
+                for phase_name, note in phase_notes.items()
+            },
             "resume_phase": phase,
             "resume_phase_status": phase_status.get(phase),
-            "resume_phase_notes": phase_notes.get(phase),
+            "resume_phase_notes": self._trim_text(str(phase_notes.get(phase) or ""), MAX_PHASE_NOTE_CHARS),
             "resume_guidance": (
                 "This is a continuation of an in-progress phase. Reuse existing workspace outputs and "
                 "focus on unresolved required changes instead of restarting already completed work."
@@ -746,6 +768,22 @@ class MissionRuntime:
         if result.unresolved_questions:
             lines.append("Open questions: " + "; ".join(result.unresolved_questions))
         return "\n".join(lines)
+
+    def _trim_text(self, value: str, max_chars: int) -> str:
+        if max_chars <= 0:
+            return ""
+        if len(value) <= max_chars:
+            return value
+        suffix = "...[truncated]"
+        if max_chars <= len(suffix):
+            return suffix[:max_chars]
+        return value[: max_chars - len(suffix)] + suffix
+
+    def _trim_list(self, items: list[str]) -> list[str]:
+        trimmed: list[str] = []
+        for item in list(items)[:MAX_FOLLOW_UP_ITEMS]:
+            trimmed.append(self._trim_text(str(item), MAX_FOLLOW_UP_ITEM_CHARS))
+        return trimmed
 
     def _phase_to_seed_for_mission(self, mission: dict[str, Any]) -> str | None:
         phase_status = dict(mission.get("phase_status") or {})

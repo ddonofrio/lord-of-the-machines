@@ -61,6 +61,9 @@ class AgentAsToolConfig:
     result_tool_name: str = "_role_task_result"
     result_method_name: str = "submit"
     internal: bool = False
+    require_structured_result: bool = True
+    structured_result_retries: int = 2
+    disable_reply_tool_for_structured_result: bool = True
 
 
 class AgentAsToolBridge:
@@ -96,21 +99,87 @@ class AgentAsToolBridge:
 
     def execute_task(self, request: RoleTaskRequest) -> RoleTaskResult:
         prompt = self._build_prompt(request)
-        raw_result, reply = self.agent.query_structured_tool_result(
-            prompt,
-            tool_name=self.config.result_tool_name,
-            method_name=self.config.result_method_name,
-            continue_previous=request.continue_previous,
-        )
-        if raw_result is not None:
+        disabled_tools = set()
+        if self.config.disable_reply_tool_for_structured_result:
+            disabled_tools.add(self.agent.config.reply.tool)
+        try:
+            raw_result, reply = self.agent.query_structured_tool_result(
+                prompt,
+                tool_name=self.config.result_tool_name,
+                method_name=self.config.result_method_name,
+                continue_previous=request.continue_previous,
+                disabled_tools=disabled_tools,
+            )
+        except Exception as exc:
+            return RoleTaskResult(
+                status="needs_follow_up",
+                summary=(
+                    "Role agent did not submit a structured task result via "
+                    f"{self.config.result_tool_name}.{self.config.result_method_name}."
+                ),
+                follow_ups=[
+                    f"Call {self.config.result_tool_name}.{self.config.result_method_name} with status and summary."
+                ],
+                metadata={"query_error": str(exc), "query_stage": "initial"},
+            )
+        parsed_result, error_message = self._parse_role_result(raw_result)
+        if parsed_result is not None:
+            return parsed_result
+
+        retries = max(0, int(self.config.structured_result_retries))
+        for attempt in range(1, retries + 1):
+            repair_prompt = self._build_repair_prompt(
+                attempt=attempt,
+                total=retries,
+                reason=error_message or "No structured result was submitted.",
+            )
             try:
-                return RoleTaskResult.from_mapping(raw_result)
-            except ValueError as exc:
+                raw_result, reply = self.agent.query_structured_tool_result(
+                    repair_prompt,
+                    tool_name=self.config.result_tool_name,
+                    method_name=self.config.result_method_name,
+                    continue_previous=True,
+                    disabled_tools=disabled_tools,
+                )
+            except Exception as exc:
                 return RoleTaskResult(
                     status="needs_follow_up",
-                    summary=f"Invalid structured role result: {exc}",
-                    metadata={"raw_tool_result": raw_result},
+                    summary=(
+                        "Role agent did not submit a structured task result via "
+                        f"{self.config.result_tool_name}.{self.config.result_method_name}."
+                    ),
+                    follow_ups=[
+                        f"Call {self.config.result_tool_name}.{self.config.result_method_name} with status and summary."
+                    ],
+                    metadata={
+                        "query_error": str(exc),
+                        "query_stage": "repair",
+                        "repair_attempt": attempt,
+                    },
                 )
+            parsed_result, error_message = self._parse_role_result(raw_result)
+            if parsed_result is not None:
+                return parsed_result
+
+        if error_message and raw_result is not None:
+            return RoleTaskResult(
+                status="needs_follow_up",
+                summary=error_message,
+                metadata={"raw_tool_result": raw_result},
+            )
+
+        if not self.config.require_structured_result:
+            fallback_summary = str(reply.message or "").strip() or (
+                "Role agent finished without structured result."
+            )
+            return RoleTaskResult(
+                status="needs_follow_up",
+                summary=fallback_summary,
+                metadata={
+                    "raw_message": reply.message,
+                    "tool_calls": [call.raw for call in reply.tool_calls],
+                },
+            )
         return RoleTaskResult(
             status="needs_follow_up",
             summary=(
@@ -124,6 +193,45 @@ class AgentAsToolBridge:
                 "raw_message": reply.message,
                 "tool_calls": [call.raw for call in reply.tool_calls],
             },
+        )
+
+    def _parse_role_result(
+        self,
+        raw_result: dict[str, Any] | None,
+    ) -> tuple[RoleTaskResult | None, str | None]:
+        if raw_result is None:
+            return None, None
+        try:
+            return RoleTaskResult.from_mapping(raw_result), None
+        except ValueError as exc:
+            return None, f"Invalid structured role result: {exc}"
+
+    def _build_repair_prompt(self, *, attempt: int, total: int, reason: str) -> str:
+        return (
+            "Structured result repair step.\n"
+            f"Reason: {reason}\n"
+            f"Attempt: {attempt}/{total}\n"
+            "Do not call reply.send_message.\n"
+            "Now call only this tool and method with valid arguments:\n"
+            f"- tool: {self.config.result_tool_name}\n"
+            f"- method: {self.config.result_method_name}\n"
+            "Required fields:\n"
+            "{"
+            '"status":"completed|needs_follow_up|blocked|failed",'
+            '"summary":"string"'
+            "}\n"
+            "Optional fields:\n"
+            "{"
+            '"artifact_type":"string|null",'
+            '"artifact_title":"string|null",'
+            '"artifact_content":"string|null",'
+            '"artifact_format":"string",'
+            '"tags":["string"],'
+            '"required_changes":["string"],'
+            '"unresolved_questions":["string"],'
+            '"follow_ups":["string"],'
+            '"metadata":{}'
+            "}"
         )
 
     def _run_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
