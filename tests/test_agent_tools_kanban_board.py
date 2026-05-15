@@ -149,6 +149,90 @@ class KanbanBoardToolTests(unittest.TestCase):
         available_tools = envelope["runtime_context"]["available_tools"]
         self.assertTrue(any(tool["name"] == "kanban_board" for tool in available_tools))
 
+    def test_claim_respects_dependencies_and_priority(self) -> None:
+        first = self.tool.handlers()["create_task"](
+            {
+                "column": "01-inbox",
+                "task_id": "K-000200",
+                "title": "Foundational task",
+                "description": "Must run first",
+                "priority": "P1",
+            }
+        )["task"]
+        second = self.tool.handlers()["create_task"](
+            {
+                "column": "01-inbox",
+                "task_id": "K-000201",
+                "title": "Higher priority blocked task",
+                "description": "Blocked by dependency",
+                "priority": "P0",
+                "depends_on": ["K-000200"],
+            }
+        )["task"]
+        self.assertEqual(second["priority"], "P0")
+
+        claimed_one = self.tool.handlers()["claim_next_task"](
+            {
+                "column": "01-inbox",
+                "agent_id": "software_developer",
+                "agent_role": "software_developer",
+                "statuses": ["ready"],
+                "done_statuses": ["done"],
+            }
+        )
+        self.assertTrue(claimed_one["claimed"])
+        self.assertEqual(claimed_one["task"]["task_id"], first["task_id"])
+
+        self.tool.handlers()["move_task"](
+            {
+                "task_id": first["task_id"],
+                "to_column": "90-done",
+                "status": "done",
+                "actor": "software_developer",
+            }
+        )
+
+        claimed_two = self.tool.handlers()["claim_next_task"](
+            {
+                "column": "01-inbox",
+                "agent_id": "software_developer",
+                "agent_role": "software_developer",
+                "statuses": ["ready"],
+                "done_statuses": ["done"],
+            }
+        )
+        self.assertTrue(claimed_two["claimed"])
+        self.assertEqual(claimed_two["task"]["task_id"], second["task_id"])
+
+    def test_update_task_applies_priority_owner_and_metadata(self) -> None:
+        created = self.tool.handlers()["create_task"](
+            {
+                "column": "01-inbox",
+                "task_id": "K-000250",
+                "title": "Update me",
+                "description": "Initial",
+            }
+        )["task"]
+
+        updated = self.tool.handlers()["update_task"](
+            {
+                "task_id": created["task_id"],
+                "priority": "P0",
+                "owner": "agent-a",
+                "task_type": "research",
+                "assignee_role": "software_architect",
+                "metadata_merge": {"mission_id": "m-1"},
+                "actor": "software_development_manager",
+                "note": "Escalated",
+            }
+        )["task"]
+        self.assertEqual(updated["priority"], "P0")
+        self.assertEqual(updated["owner"], "agent-a")
+        self.assertEqual(updated["task_type"], "research")
+        self.assertEqual(updated["assignee_role"], "software_architect")
+        self.assertEqual(updated["metadata"]["mission_id"], "m-1")
+        self.assertIn("Escalated", updated["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

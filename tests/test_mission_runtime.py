@@ -9,6 +9,8 @@ from lord_of_the_machines.agent_tools import (
     ArtifactRegistryToolConfig,
     EventBusTool,
     EventBusToolConfig,
+    KanbanBoardTool,
+    KanbanBoardToolConfig,
     MissionRegistryTool,
     MissionRegistryToolConfig,
 )
@@ -40,6 +42,10 @@ class MissionRuntimeTests(unittest.TestCase):
         self.artifact_registry = ArtifactRegistryTool(
             root / "artifacts",
             config=ArtifactRegistryToolConfig(root_path=root / "artifacts"),
+        )
+        self.kanban_board = KanbanBoardTool(
+            root / "kanban",
+            config=KanbanBoardToolConfig(root_path=root / "kanban"),
         )
 
     def tearDown(self) -> None:
@@ -779,6 +785,193 @@ class MissionRuntimeTests(unittest.TestCase):
         seeded = runtime.seed_pending_missions()
 
         self.assertEqual(len(seeded["seeded_events"]), 0)
+
+    def test_development_plan_metadata_seeds_implementation_queue(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_task_queue_seed",
+                "title": "Queue Seed",
+                "description": "Seed implementation tasks from development plan metadata.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {"mission_id": "mission_task_queue_seed", "phase": "product_direction", "status": "completed", "notes": "ok"}
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_task_queue_seed",
+                "phase": "product_requirements",
+                "status": "completed",
+                "notes": "ok",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {"mission_id": "mission_task_queue_seed", "phase": "technical_design", "status": "completed", "notes": "ok"}
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_task_queue_seed",
+                "phase": "development_plan",
+                "status": "requested",
+                "notes": "start",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {"mission_id": "mission_task_queue_seed", "status": "in_progress", "reason": "start development plan"}
+        )
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_task_queue_seed",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "development_plan",
+                    "role": "software_development_manager",
+                    "objective": "Create a plan",
+                    "round": 1,
+                },
+            }
+        )
+        executor = FakeRoleExecutor(
+            RoleTaskResult(
+                status="completed",
+                summary="Plan ready",
+                metadata={
+                    "implementation_tasks": [
+                        {
+                            "key": "TASK-1",
+                            "title": "Implement command policy flag",
+                            "description": "Add allow_system_command_execution policy field.",
+                            "priority": "P0",
+                            "task_type": "implementation",
+                        },
+                        {
+                            "key": "TASK-2",
+                            "title": "Write tests",
+                            "description": "Cover system command policy behavior.",
+                            "priority": "P1",
+                            "task_type": "qa",
+                            "depends_on": ["TASK-1"],
+                        },
+                    ]
+                },
+            )
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"software_development_manager": executor},
+            kanban_board=self.kanban_board,
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        runtime.run_once()
+
+        listed = self.kanban_board.handlers()["list_tasks"](
+            {"column": "05-implementation", "mission_id": "mission_task_queue_seed", "include_body": False}
+        )["columns"][0]["tasks"]
+        self.assertEqual(len(listed), 2)
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_task_queue_seed"}
+        )["events"]
+        implementation_events = [
+            event for event in events if str((event.get("payload") or {}).get("phase") or "") == "implementation"
+        ]
+        self.assertEqual(len(implementation_events), 1)
+        self.assertTrue(str(implementation_events[0]["payload"].get("task_id") or "").startswith("K-"))
+
+    def test_implementation_completion_moves_task_and_queues_next_ticket(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_task_queue_run",
+                "title": "Queue Run",
+                "description": "Run implementation tasks one by one.",
+            }
+        )
+        for phase in ("product_direction", "product_requirements", "technical_design", "development_plan"):
+            self.mission_registry.handlers()["update_mission_phase"](
+                {
+                    "mission_id": "mission_task_queue_run",
+                    "phase": phase,
+                    "status": "completed",
+                    "notes": "ok",
+                }
+            )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_task_queue_run",
+                "phase": "implementation",
+                "status": "requested",
+                "notes": "queue running",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {"mission_id": "mission_task_queue_run", "status": "in_progress", "reason": "implementation queue"}
+        )
+
+        first_task = self.kanban_board.handlers()["create_task"](
+            {
+                "column": "05-implementation",
+                "task_id": "K-000700",
+                "title": "Ticket one",
+                "description": "first",
+                "status": "in_progress",
+                "owner": "software_developer",
+                "priority": "P1",
+                "metadata": {"mission_id": "mission_task_queue_run", "phase": "implementation"},
+            }
+        )["task"]
+        second_task = self.kanban_board.handlers()["create_task"](
+            {
+                "column": "05-implementation",
+                "task_id": "K-000701",
+                "title": "Ticket two",
+                "description": "second",
+                "status": "ready",
+                "priority": "P1",
+                "metadata": {"mission_id": "mission_task_queue_run", "phase": "implementation"},
+            }
+        )["task"]
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_task_queue_run",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "implementation",
+                    "role": "software_developer",
+                    "objective": "Execute first ticket",
+                    "task_id": first_task["task_id"],
+                    "round": 1,
+                },
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={
+                "software_developer": FakeRoleExecutor(RoleTaskResult(status="completed", summary="Ticket one done"))
+            },
+            kanban_board=self.kanban_board,
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        result = runtime.run_once()
+
+        outcome = result["processed"][0]["outcome"]
+        self.assertEqual(outcome["status"], "in_progress")
+        self.assertEqual(outcome["reason"], "implementation_tasks_remaining")
+
+        done_task = self.kanban_board.handlers()["get_task"]({"task_id": first_task["task_id"]})["task"]
+        queued_task = self.kanban_board.handlers()["get_task"]({"task_id": second_task["task_id"]})["task"]
+        self.assertEqual(done_task["column"], "90-done")
+        self.assertEqual(done_task["status"], "done")
+        self.assertEqual(queued_task["status"], "in_progress")
+
+        mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_task_queue_run"})["mission"]
+        self.assertEqual(mission["phase_status"]["implementation"], "in_progress")
 
 
 if __name__ == "__main__":

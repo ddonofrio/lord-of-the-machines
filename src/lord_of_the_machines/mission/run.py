@@ -11,6 +11,8 @@ from lord_of_the_machines import MissingApiKeyError
 from lord_of_the_machines.agent_tools import (
     ArtifactRegistryTool,
     EventBusTool,
+    KanbanBoardTool,
+    KanbanBoardToolConfig,
     MissionRegistryTool,
 )
 from lord_of_the_machines.mission import (
@@ -84,6 +86,12 @@ def build_default_runner(
     tool_calling_mode: str,
 ) -> MissionRunner:
     mission_registry, event_bus, artifact_registry = create_storage_tools(state_dir)
+    kanban_board = KanbanBoardTool(
+        state_dir / "kanban_board",
+        config=KanbanBoardToolConfig(
+            root_path=state_dir / "kanban_board",
+        ),
+    )
     factory = RoleAgentFactory(
         config=RoleAgentFactoryConfig(
             base_overrides={
@@ -112,8 +120,10 @@ def build_default_runner(
         meeting_organizer_agent,
         participant_agents=role_agents,
     )
+    kanban_board.install(meeting_organizer_agent)
     for agent in role_agents.values():
         meeting_tool.install(agent)
+        kanban_board.install(agent)
 
     install_read_only_software_workspace_tool(
         software_architect_agent,
@@ -162,6 +172,7 @@ def build_default_runner(
         mission_registry=mission_registry,
         event_bus=event_bus,
         artifact_registry=artifact_registry,
+        kanban_board=kanban_board,
         role_executors={
             "product_director": product_director_executor,
             "product_manager": product_manager_executor,

@@ -21,6 +21,8 @@ class SoftwareDevelopmentEnvironmentPermissionPolicy:
     allow_diagnostics: bool = True
     allow_git_inspection: bool = True
     allow_protected_path_writes: bool = False
+    # New: Explicit policy gating for OS-level system commands
+    allow_system_command_execution: bool = False  # Explicit-deny by default.
 
     @classmethod
     def read_only(cls) -> SoftwareDevelopmentEnvironmentPermissionPolicy:
@@ -33,6 +35,7 @@ class SoftwareDevelopmentEnvironmentPermissionPolicy:
             allow_diagnostics=False,
             allow_git_inspection=True,
             allow_protected_path_writes=False,
+            allow_system_command_execution=False,
         )
 
 
@@ -43,4 +46,3 @@ class SoftwareDevelopmentEnvironmentExecutionPolicy:
     require_dry_run_for_delete: bool = True
     max_destructive_entries: int | None = DEFAULT_MAX_DESTRUCTIVE_ENTRIES
     max_command_timeout_seconds: int | None = DEFAULT_MAX_COMMAND_TIMEOUT_SECONDS
-

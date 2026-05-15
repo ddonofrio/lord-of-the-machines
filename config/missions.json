@@ -77,6 +77,90 @@
           "docs/qa-agent-integration.md explains the implementation."
         ]
       }
+    },
+    {
+      "mission_id": "mvp_os_system_command_tool",
+      "title": "Add OS System Command Capability To Developer Tool",
+      "description": "Implement a system-level command method in software_development_environment so developer agents can execute operating-system commands with disk/system visibility under explicit policy control.",
+      "metadata": {
+        "goal": "Enable controlled OS-level command execution for autonomous development tasks.",
+        "decision_defaults": {
+          "system_command_policy": "OS-level command execution must be explicit and policy-driven. It should be disabled by default for read-only roles and enabled only where explicitly configured.",
+          "backward_compatibility_policy": "Existing workspace-scoped run_command behavior must keep working as-is."
+        },
+        "workflow_constraints": [
+          "Implement real code changes; do not stop at planning.",
+          "Do not remove or silently weaken existing safety controls.",
+          "Keep workspace-scoped command execution available for current workflows.",
+          "Add tests for new command method behavior and policy gating.",
+          "Document the new capability, limits, and risk controls."
+        ],
+        "deliverables": [
+          {
+            "type": "code",
+            "path": "src/lord_of_the_machines/agent_tools/software_development_environment/commands.py",
+            "description": "Add OS-level command execution method with explicit policy checks."
+          },
+          {
+            "type": "code",
+            "path": "src/lord_of_the_machines/agent_tools/software_development_environment/tool.py",
+            "description": "Expose new method in tool handlers/definition according to permission policy."
+          },
+          {
+            "type": "code",
+            "path": "src/lord_of_the_machines/agent_tools/software_development_environment/definition.py",
+            "description": "Document schema for the OS-level command method."
+          },
+          {
+            "type": "code",
+            "path": "src/lord_of_the_machines/agent_tools/software_development_environment/policy.py",
+            "description": "Add explicit permission flags for OS-level command execution."
+          },
+          {
+            "type": "tests",
+            "description": "Add/update tests for method exposure, execution policy gating, and command result behavior."
+          },
+          {
+            "type": "documentation",
+            "path": "docs/system-command-tooling.md",
+            "description": "Explain how to use the OS-level command capability, required policy flags, and safety notes."
+          }
+        ],
+        "acceptance_checks": {
+          "documentation_file": "docs/system-command-tooling.md",
+          "required_files": [
+            "docs/system-command-tooling.md"
+          ],
+          "required_file_contains": {
+            "src/lord_of_the_machines/agent_tools/software_development_environment/commands.py": [
+              "def _run_system_command(",
+              "run_system_command"
+            ],
+            "src/lord_of_the_machines/agent_tools/software_development_environment/tool.py": [
+              "\"run_system_command\": self._run_system_command",
+              "\"run_system_command\""
+            ],
+            "src/lord_of_the_machines/agent_tools/software_development_environment/definition.py": [
+              "\"run_system_command\""
+            ],
+            "src/lord_of_the_machines/agent_tools/software_development_environment/policy.py": [
+              "allow_system_command_execution"
+            ]
+          },
+          "required_role_mentions": [
+            "software_developer",
+            "software_development_manager",
+            "software_architect"
+          ]
+        },
+        "acceptance_criteria": [
+          "A new OS-level command method exists in software_development_environment.",
+          "OS-level command execution is policy-gated and explicitly configurable.",
+          "Current workspace-scoped command behavior remains available.",
+          "Automated tests cover the new method and policy behavior.",
+          "Documentation explains usage and safety controls."
+        ]
+      }
     }
   ]
 }

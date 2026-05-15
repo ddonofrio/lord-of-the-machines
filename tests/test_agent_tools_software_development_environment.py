@@ -213,3 +213,26 @@ class SoftwareDevelopmentEnvironmentToolTests(unittest.TestCase):
         envelope = json.loads(client.responses.calls[0]["input"])
         available_tools = envelope["runtime_context"]["available_tools"]
         self.assertTrue(any(tool["name"] == "software_development_environment" for tool in available_tools))
+
+    def test_run_system_command_policy_gated(self):
+        # Denied by default
+        args = {"argv": ["echo", "should_not_run"]}
+        with self.assertRaises(SoftwareDevelopmentEnvironmentPolicyError):
+            self.tool.handlers()["run_system_command"](args)
+
+        # Enable policy and allow
+        self.tool.config.permission_policy.allow_system_command_execution = True
+        result = self.tool.handlers()["run_system_command"]({"argv": ["echo", "Hello, system!"]})
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("Hello, system", result["stdout"])
+        self.assertTrue(result["ok"])
+
+        # Failure on bad command
+        fail_result = self.tool.handlers()["run_system_command"]({"argv": ["nonexistent__cmd"]})
+        self.assertFalse(fail_result["ok"])
+        self.assertNotEqual(fail_result["exit_code"], 0)
+
+        # Disabling again blocks
+        self.tool.config.permission_policy.allow_system_command_execution = False
+        with self.assertRaises(SoftwareDevelopmentEnvironmentPolicyError):
+            self.tool.handlers()["run_system_command"]({"argv": ["echo", "X"]})

@@ -48,6 +48,7 @@ Included so far:
 - Unit tests using a fake OpenAI client.
 - A first `agent_tools` package under `src/lord_of_the_machines/agent_tools/`.
 - `software_development_environment`, a tool package for file reads, controlled edits, search, safe command execution, diagnostics, git inspection, project-context detection, and a persisted activity journal in `logs/`.
+- `kanban_board`, a priority-aware ticket board backed by markdown files with dependency-aware claiming, task movement, updates, and per-ticket metadata/history.
 - `todo_list`, a tool package for per-agent TODO list files with task creation, completion/uncompletion, removal, and progress inspection.
 - `mission_registry`, a persistent mission catalog with lifecycle state, phase status tracking, and role assignments.
 - `event_bus`, a persistent event stream with consumer offsets and acknowledgements for event-driven orchestration.
@@ -334,7 +335,11 @@ src/lord_of_the_machines/mission/
 Main components:
 
 - `MissionRuntime`: seeds pending missions into `mission.phase.requested`, consumes events, dispatches role executors, updates mission phase state, and publishes completion/failure/artifact events.
-- `MissionRuntimeConfig.phase_transitions`: supports next-phase scheduling after a role finishes. The default MVP flow is `product_direction -> product_requirements -> technical_design -> development_plan -> implementation`.
+- `MissionRuntimeConfig.phase_transitions`: supports next-phase scheduling after a role finishes. The default flow is `product_direction -> product_requirements -> technical_design -> development_plan -> implementation -> qa`.
+- `MissionRuntime` implementation queue mode:
+  - SDM can publish `metadata.implementation_tasks` in `development_plan` results.
+  - Runtime materializes those entries into `kanban_board` tickets under `05-implementation`.
+  - Implementation runs ticket-by-ticket using `task_id`; finishing one ticket automatically queues the next claimable ticket until the queue is empty.
 - `AgentAsToolBridge`: wraps a `BaseAgent` and exposes it as a regular tool method (`run_task`) so other agents can call it through normal tool calling.
 - `MeetingToolAgent`: wraps a specialized meeting organizer agent as a tool (`run_meeting`), exposes `list_available_roles`, and can call participant role agents for focused meeting contributions.
 - `MeetingRoleExecutor`: adapter that lets meeting output plug directly into mission-phase execution (`RoleTaskResult`).
@@ -346,6 +351,7 @@ Main components:
 - `MissionRunner`: loop controller to load missions from JSON, create them in the registry, seed events, and execute runtime cycles until idle.
 - `SoftwareDeveloperRoleExecutor`: implementation executor with:
   - `software_development_environment` tool installed on the role agent,
+  - `kanban_board` ticket context support (`task_id` + board task context),
   - scoped write-prefix guardrails,
   - required diagnostics execution before completion,
   - idempotent completion when inspection proves no file changes are needed.

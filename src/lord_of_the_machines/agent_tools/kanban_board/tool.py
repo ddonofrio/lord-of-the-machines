@@ -8,6 +8,7 @@ from typing import Any
 
 from lord_of_the_machines.agent_tools.kanban_board.config import KanbanBoardToolConfig
 from lord_of_the_machines.agent_tools.kanban_board.contracts import (
+    ALLOWED_PRIORITIES,
     AppendTaskNoteRequest,
     ClaimNextTaskRequest,
     CreateTaskRequest,
@@ -17,6 +18,7 @@ from lord_of_the_machines.agent_tools.kanban_board.contracts import (
     ListTasksRequest,
     MoveTaskRequest,
     TaskHistoryEntry,
+    UpdateTaskRequest,
 )
 from lord_of_the_machines.agent_tools.kanban_board.definition import build_definition
 from lord_of_the_machines.llm.base_agent import BaseAgent
@@ -27,6 +29,7 @@ from lord_of_the_machines.llm.tools import ToolHandler
 SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$")
 TASK_ID_RE = re.compile(r"^K-(\d{6,})$")
 FRONTMATTER_DELIMITER = "---"
+PRIORITY_RANK = {value: index for index, value in enumerate(ALLOWED_PRIORITIES)}
 
 
 class KanbanBoardTool:
@@ -50,6 +53,7 @@ class KanbanBoardTool:
             "claim_next_task": self._claim_next_task,
             "move_task": self._move_task,
             "append_task_note": self._append_task_note,
+            "update_task": self._update_task,
         }
 
     def _list_columns(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -69,16 +73,17 @@ class KanbanBoardTool:
 
     def _list_tasks(self, arguments: dict[str, Any]) -> dict[str, Any]:
         request = ListTasksRequest.from_mapping(arguments)
-        if request.column:
-            column = self._safe_column_name(request.column)
-            task_paths = self._task_paths_in_column(column)
-            tasks = [self._load_task_payload(path, include_body=request.include_body) for path in task_paths]
-            return {"columns": [{"column": column, "tasks": tasks}]}
+        columns = [self._safe_column_name(request.column)] if request.column else list(self.config.columns)
 
         columns_payload = []
-        for column in self.config.columns:
-            task_paths = self._task_paths_in_column(column)
-            tasks = [self._load_task_payload(path, include_body=request.include_body) for path in task_paths]
+        for column in columns:
+            tasks: list[dict[str, Any]] = []
+            for path in self._task_paths_in_column(column):
+                meta, body = self._load_task_file(path)
+                if not self._task_matches_filters(meta, request):
+                    continue
+                tasks.append(self._task_payload(meta, path, body=body, include_body=request.include_body))
+            tasks.sort(key=self._task_sort_key)
             columns_payload.append({"column": column, "tasks": tasks})
         return {"columns": columns_payload}
 
@@ -103,13 +108,21 @@ class KanbanBoardTool:
             owner=request.owner,
             created_at=now,
             updated_at=now,
+            priority=request.priority,
+            task_type=request.task_type,
+            depends_on=[self._safe_task_id(item) for item in request.depends_on],
+            assignee_role=request.assignee_role,
             metadata=dict(request.metadata),
             history=[
                 TaskHistoryEntry(
                     at=now,
                     action="created",
                     by=request.owner,
-                    details={"column": column},
+                    details={
+                        "column": column,
+                        "priority": request.priority,
+                        "task_type": request.task_type,
+                    },
                 )
             ],
         )
@@ -134,36 +147,58 @@ class KanbanBoardTool:
         request = ClaimNextTaskRequest.from_mapping(arguments)
         column = self._safe_column_name(request.column)
         allowed_statuses = {status.strip().lower() for status in request.statuses}
+        done_statuses = {status.strip().lower() for status in request.done_statuses}
         claimed_status = request.claimed_status.strip().lower()
+
+        dependency_status_map = self._task_status_map()
+        candidates: list[tuple[Path, KanbanTaskMeta, str]] = []
         for task_path in self._task_paths_in_column(column):
             meta, body = self._load_task_file(task_path)
             if meta.status not in allowed_statuses:
                 continue
             if meta.owner:
                 continue
-            now = self._utc_now()
-            previous_status = meta.status
-            meta.owner = request.agent_id
-            meta.status = claimed_status
-            meta.updated_at = now
-            meta.history.append(
-                TaskHistoryEntry(
-                    at=now,
-                    action="claimed",
-                    by=request.agent_id,
-                    details={
-                        "column": column,
-                        "previous_status": previous_status,
-                        "status": claimed_status,
-                    },
-                )
+            if meta.assignee_role and not request.allow_assignee_role_mismatch:
+                if not request.agent_role or request.agent_role != meta.assignee_role:
+                    continue
+            if request.respect_dependencies and not self._dependencies_satisfied(meta, dependency_status_map, done_statuses):
+                continue
+            candidates.append((task_path, meta, body))
+
+        candidates.sort(
+            key=lambda item: (
+                self._priority_rank(item[1].priority),
+                item[1].created_at,
+                item[1].task_id,
             )
-            self._save_task_file(task_path, meta, body)
-            return {
-                "claimed": True,
-                "task": self._task_payload(meta, task_path, body=body, include_body=True),
-            }
-        return {"claimed": False, "task": None}
+        )
+        if not candidates:
+            return {"claimed": False, "task": None}
+
+        task_path, meta, body = candidates[0]
+        now = self._utc_now()
+        previous_status = meta.status
+        meta.owner = request.agent_id
+        meta.status = claimed_status
+        meta.updated_at = now
+        meta.history.append(
+            TaskHistoryEntry(
+                at=now,
+                action="claimed",
+                by=request.agent_id,
+                details={
+                    "column": column,
+                    "previous_status": previous_status,
+                    "status": claimed_status,
+                    "agent_role": request.agent_role,
+                },
+            )
+        )
+        self._save_task_file(task_path, meta, body)
+        return {
+            "claimed": True,
+            "task": self._task_payload(meta, task_path, body=body, include_body=True),
+        }
 
     def _move_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
         request = MoveTaskRequest.from_mapping(arguments)
@@ -228,6 +263,60 @@ class KanbanBoardTool:
         self._save_task_file(task_path, meta, body)
         return {"updated": True, "task": self._task_payload(meta, task_path, body=body, include_body=True)}
 
+    def _update_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        request = UpdateTaskRequest.from_mapping(arguments)
+        task_path = self._find_task_path(task_id=request.task_id, column=request.column)
+        if task_path is None:
+            raise FileNotFoundError(f"Task not found: {request.task_id}")
+
+        meta, body = self._load_task_file(task_path)
+        details: dict[str, Any] = {}
+        if request.status is not None:
+            meta.status = request.status.strip().lower()
+            details["status"] = meta.status
+        if request.clear_owner:
+            meta.owner = None
+            details["owner"] = None
+        elif request.owner is not None:
+            meta.owner = request.owner
+            details["owner"] = request.owner
+        if request.priority is not None:
+            meta.priority = request.priority
+            details["priority"] = request.priority
+        if request.task_type is not None:
+            meta.task_type = request.task_type
+            details["task_type"] = request.task_type
+        if request.depends_on is not None:
+            meta.depends_on = [self._safe_task_id(item) for item in request.depends_on]
+            details["depends_on"] = list(meta.depends_on)
+        if request.clear_assignee_role:
+            meta.assignee_role = None
+            details["assignee_role"] = None
+        elif request.assignee_role is not None:
+            meta.assignee_role = request.assignee_role
+            details["assignee_role"] = request.assignee_role
+        if request.metadata_merge:
+            merged_metadata = dict(meta.metadata)
+            merged_metadata.update(request.metadata_merge)
+            meta.metadata = merged_metadata
+            details["metadata_merge_keys"] = sorted(request.metadata_merge.keys())
+        if request.note:
+            body = self._append_activity_markdown(body, at=self._utc_now(), actor=request.actor, note=request.note)
+            details["note"] = True
+
+        now = self._utc_now()
+        meta.updated_at = now
+        meta.history.append(
+            TaskHistoryEntry(
+                at=now,
+                action="updated",
+                by=request.actor,
+                details=details,
+            )
+        )
+        self._save_task_file(task_path, meta, body)
+        return {"updated": True, "task": self._task_payload(meta, task_path, body=body, include_body=True)}
+
     def _find_task_path(self, *, task_id: str, column: str | None = None) -> Path | None:
         safe_task_id = self._safe_task_id(task_id)
         if column:
@@ -265,6 +354,10 @@ class KanbanBoardTool:
             "title": meta.title,
             "status": meta.status,
             "owner": meta.owner,
+            "priority": meta.priority,
+            "task_type": meta.task_type,
+            "depends_on": list(meta.depends_on),
+            "assignee_role": meta.assignee_role,
             "column": path.parent.name,
             "path": self._relative_to_root(path),
             "file_name": path.name,
@@ -383,3 +476,51 @@ class KanbanBoardTool:
 
     def _utc_now(self) -> str:
         return datetime.now(tz=timezone.utc).isoformat()
+
+    def _task_sort_key(self, payload: dict[str, Any]) -> tuple[int, str, str]:
+        priority = str(payload.get("priority") or "P2").upper()
+        created_at = str(payload.get("created_at") or "")
+        task_id = str(payload.get("task_id") or "")
+        return (self._priority_rank(priority), created_at, task_id)
+
+    def _task_matches_filters(self, meta: KanbanTaskMeta, request: ListTasksRequest) -> bool:
+        if request.statuses and meta.status not in set(request.statuses):
+            return False
+        if request.owner is not None and meta.owner != request.owner:
+            return False
+        if request.task_type is not None and meta.task_type != request.task_type:
+            return False
+        if request.priorities and meta.priority not in set(request.priorities):
+            return False
+        if request.assignee_role is not None and meta.assignee_role != request.assignee_role:
+            return False
+        if request.mission_id is not None:
+            mission_id = str(meta.metadata.get("mission_id") or "").strip()
+            if mission_id != request.mission_id:
+                return False
+        return True
+
+    def _priority_rank(self, priority: str) -> int:
+        return PRIORITY_RANK.get(priority.strip().upper(), PRIORITY_RANK["P2"])
+
+    def _task_status_map(self) -> dict[str, str]:
+        status_map: dict[str, str] = {}
+        for column in self.config.columns:
+            for task_path in self._task_paths_in_column(column):
+                meta, _body = self._load_task_file(task_path)
+                status_map[meta.task_id] = meta.status
+        return status_map
+
+    def _dependencies_satisfied(
+        self,
+        meta: KanbanTaskMeta,
+        status_map: dict[str, str],
+        done_statuses: set[str],
+    ) -> bool:
+        for dependency in meta.depends_on:
+            status = status_map.get(dependency)
+            if status is None:
+                return False
+            if status not in done_statuses:
+                return False
+        return True

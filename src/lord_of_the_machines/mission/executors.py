@@ -194,6 +194,11 @@ class SoftwareDeveloperRoleExecutor:
                 "If you must do a large rewrite, set allow_large_rewrite=true explicitly and explain why in the summary.",
                 "If a suggested target file does not exist, create it in an allowed write prefix or adapt the nearest existing module.",
                 "Do not report blocked due missing files unless list_tree over allowed prefixes proves there are zero writable project files.",
+                (
+                    f"Current board task id: {request.task_id}. Complete this task scope first and report clear evidence."
+                    if request.task_id
+                    else "If board_task context exists, treat it as the primary scope source for this run."
+                ),
             ],
             max_rounds=request.max_rounds,
             continue_previous=request.continue_previous,

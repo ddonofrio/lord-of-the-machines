@@ -58,6 +58,7 @@ class SoftwareDevelopmentEnvironmentTool(
             "read_file": self._read_file,
             "read_files": self._read_files,
             "file_metadata": self._file_metadata,
+            "run_system_command": self._run_system_command,
             "write_file": self._write_file,
             "append_file": self._append_file,
             "replace_text": self._replace_text,
@@ -102,6 +103,8 @@ class SoftwareDevelopmentEnvironmentTool(
             allowed.add("delete_path")
         if policy.allow_command_execution:
             allowed.add("run_command")
+        if policy.allow_system_command_execution:
+            allowed.add("run_system_command")
         if policy.allow_diagnostics:
             allowed.add("run_diagnostics")
         if policy.allow_git_inspection:

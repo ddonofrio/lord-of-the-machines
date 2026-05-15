@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Self
 
+ALLOWED_PRIORITIES = ("P0", "P1", "P2", "P3")
+
 
 class MappingModel:
     def to_mapping(self) -> dict[str, Any]:
@@ -61,6 +63,14 @@ def _optional_mapping(values: dict[str, Any], field_name: str) -> dict[str, Any]
     return dict(value)
 
 
+def _normalize_priority(value: str | None, *, default: str = "P2") -> str:
+    candidate = (value or default).strip().upper()
+    if candidate not in ALLOWED_PRIORITIES:
+        allowed = ", ".join(ALLOWED_PRIORITIES)
+        raise ValueError(f"priority must be one of: {allowed}.")
+    return candidate
+
+
 @dataclass(slots=True)
 class TaskHistoryEntry(MappingModel):
     at: str
@@ -87,6 +97,10 @@ class KanbanTaskMeta(MappingModel):
     owner: str | None
     created_at: str
     updated_at: str
+    priority: str = "P2"
+    task_type: str = "implementation"
+    depends_on: list[str] = field(default_factory=list)
+    assignee_role: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     history: list[TaskHistoryEntry] = field(default_factory=list)
 
@@ -103,6 +117,10 @@ class KanbanTaskMeta(MappingModel):
             owner=_optional_string(values, "owner"),
             created_at=_require_string(values, "created_at"),
             updated_at=_require_string(values, "updated_at"),
+            priority=_normalize_priority(_optional_string(values, "priority"), default="P2"),
+            task_type=_optional_string(values, "task_type") or "implementation",
+            depends_on=_optional_string_list(values, "depends_on"),
+            assignee_role=_optional_string(values, "assignee_role"),
             metadata=_optional_mapping(values, "metadata"),
             history=[TaskHistoryEntry.from_mapping(item) for item in raw_history],
         )
@@ -120,13 +138,28 @@ class ListColumnsRequest:
 class ListTasksRequest:
     column: str | None = None
     include_body: bool = False
+    statuses: list[str] = field(default_factory=list)
+    owner: str | None = None
+    task_type: str | None = None
+    priorities: list[str] = field(default_factory=list)
+    assignee_role: str | None = None
+    mission_id: str | None = None
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any] | None) -> Self:
         values = _ensure_mapping(value)
+        priorities = [item.strip().upper() for item in _optional_string_list(values, "priorities")]
+        for priority in priorities:
+            _normalize_priority(priority)
         return cls(
             column=_optional_string(values, "column"),
             include_body=_optional_bool(values, "include_body", False),
+            statuses=[item.strip().lower() for item in _optional_string_list(values, "statuses")],
+            owner=_optional_string(values, "owner"),
+            task_type=_optional_string(values, "task_type"),
+            priorities=priorities,
+            assignee_role=_optional_string(values, "assignee_role"),
+            mission_id=_optional_string(values, "mission_id"),
         )
 
 
@@ -138,6 +171,10 @@ class CreateTaskRequest:
     task_id: str | None = None
     status: str = "ready"
     owner: str | None = None
+    priority: str = "P2"
+    task_type: str = "implementation"
+    depends_on: list[str] = field(default_factory=list)
+    assignee_role: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     overwrite: bool = False
 
@@ -151,6 +188,10 @@ class CreateTaskRequest:
             task_id=_optional_string(values, "task_id"),
             status=_optional_string(values, "status") or "ready",
             owner=_optional_string(values, "owner"),
+            priority=_normalize_priority(_optional_string(values, "priority"), default="P2"),
+            task_type=_optional_string(values, "task_type") or "implementation",
+            depends_on=_optional_string_list(values, "depends_on"),
+            assignee_role=_optional_string(values, "assignee_role"),
             metadata=_optional_mapping(values, "metadata"),
             overwrite=_optional_bool(values, "overwrite", False),
         )
@@ -176,18 +217,27 @@ class GetTaskRequest:
 class ClaimNextTaskRequest:
     column: str
     agent_id: str
+    agent_role: str | None = None
     statuses: list[str] = field(default_factory=lambda: ["ready"])
     claimed_status: str = "in_progress"
+    respect_dependencies: bool = True
+    done_statuses: list[str] = field(default_factory=lambda: ["done", "completed", "closed"])
+    allow_assignee_role_mismatch: bool = False
 
     @classmethod
     def from_mapping(cls, value: dict[str, Any] | None) -> Self:
         values = _ensure_mapping(value)
         statuses = _optional_string_list(values, "statuses") or ["ready"]
+        done_statuses = _optional_string_list(values, "done_statuses") or ["done", "completed", "closed"]
         return cls(
             column=_require_string(values, "column"),
             agent_id=_require_string(values, "agent_id"),
+            agent_role=_optional_string(values, "agent_role"),
             statuses=statuses,
             claimed_status=_optional_string(values, "claimed_status") or "in_progress",
+            respect_dependencies=_optional_bool(values, "respect_dependencies", True),
+            done_statuses=done_statuses,
+            allow_assignee_role_mismatch=_optional_bool(values, "allow_assignee_role_mismatch", False),
         )
 
 
@@ -228,4 +278,49 @@ class AppendTaskNoteRequest:
             note=_require_string(values, "note"),
             column=_optional_string(values, "column"),
             actor=_optional_string(values, "actor"),
+        )
+
+
+@dataclass(slots=True)
+class UpdateTaskRequest:
+    task_id: str
+    column: str | None = None
+    actor: str | None = None
+    status: str | None = None
+    owner: str | None = None
+    clear_owner: bool = False
+    priority: str | None = None
+    task_type: str | None = None
+    depends_on: list[str] | None = None
+    assignee_role: str | None = None
+    clear_assignee_role: bool = False
+    metadata_merge: dict[str, Any] = field(default_factory=dict)
+    note: str | None = None
+
+    @classmethod
+    def from_mapping(cls, value: dict[str, Any] | None) -> Self:
+        values = _ensure_mapping(value)
+        priority = _optional_string(values, "priority")
+        if priority is not None:
+            priority = _normalize_priority(priority)
+        depends_on_raw = values.get("depends_on")
+        depends_on: list[str] | None
+        if depends_on_raw is None:
+            depends_on = None
+        else:
+            depends_on = _optional_string_list(values, "depends_on")
+        return cls(
+            task_id=_require_string(values, "task_id"),
+            column=_optional_string(values, "column"),
+            actor=_optional_string(values, "actor"),
+            status=_optional_string(values, "status"),
+            owner=_optional_string(values, "owner"),
+            clear_owner=_optional_bool(values, "clear_owner", False),
+            priority=priority,
+            task_type=_optional_string(values, "task_type"),
+            depends_on=depends_on,
+            assignee_role=_optional_string(values, "assignee_role"),
+            clear_assignee_role=_optional_bool(values, "clear_assignee_role", False),
+            metadata_merge=_optional_mapping(values, "metadata_merge"),
+            note=_optional_string(values, "note"),
         )

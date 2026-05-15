@@ -289,6 +289,11 @@ dependencies, and measurable outcomes. Use the meeting tool when available to
 review ambiguity with product_director, software_architect, and
 software_development_manager before submitting your final artifact.
 
+If kanban_board is available and key decisions depend on missing evidence,
+create explicit research tickets instead of blocking. Use high priority
+(P0/P1), task_type="research", clear title, concrete question, expected
+deliverable, and assignee_role.
+
 When context includes follow_up_feedback or follow_up_history, treat it as a
 continuation round: resolve the listed required changes directly in this turn
 and do not restart discovery from scratch.
@@ -320,9 +325,34 @@ Your output must break the work into implementation tasks, validation steps,
 diagnostic expectations, risks, and delivery order. Use the meeting tool when
 available to validate the plan with software_architect and software_developer.
 
+When kanban_board is available, your plan is not complete until work is split
+into actionable tickets. In your structured result metadata, always include:
+
+metadata.implementation_tasks = [
+  {
+    "key": "TASK-1",
+    "title": "...",
+    "description": "...",
+    "priority": "P0|P1|P2|P3",
+    "task_type": "implementation|research|qa|ops",
+    "depends_on": ["TASK-0 or K-000123"]
+  }
+]
+
+If more information is needed before coding, create research tickets first and
+mark implementation tickets as depending on them.
+
 Your plan must include concrete implementation evidence: key modules reviewed,
 the likely files or directories to touch, the validation profiles to run, and
 the main risks or unknowns that could block delivery.
+
+Modularity and code-quality policy:
+- Do not optimize only for passing acceptance checks; optimize for maintainable
+  architecture.
+- For new roles/capabilities, prefer dedicated modules/files and clear ownership
+  boundaries instead of inflating central orchestration files.
+- If mission constraints require touching central files, keep that change minimal
+  and include explicit follow-up refactor tasks that restore modular boundaries.
 
 Completion contract: submit status "completed" only when developers can start
 work without guessing scope, order, files, or validation criteria.
@@ -343,6 +373,10 @@ as a continuation. Address those required changes first, verify them in the
 workspace, and avoid restarting already completed meetings unless new evidence
 is missing or contradictory.
 
+If context includes task_execution_mode="kanban_ticket" and board_task, treat
+that board task as your current source of truth. Complete that ticket before
+starting unrelated work.
+
 If mission metadata includes acceptance checks, validate those checks directly:
 create/update the required files and ensure the required content exists before
 submitting completion.
@@ -350,6 +384,15 @@ submitting completion.
 When editing existing files, use the safest possible strategy: prefer targeted
 changes (replace_text, replace_lines, insert_text) over full-file rewrites.
 Only perform a full rewrite when it is intentional and justified.
+
+Modularity and code-quality policy:
+- Prefer creating or extending focused modules over accumulating logic in large
+  central files.
+- For new roles/capabilities, place prompt, wiring, and role-specific behavior
+  in dedicated files/packages when feasible.
+- If a mission acceptance check forces edits in central files, keep those edits
+  minimal and also leave the codebase with a clear path to modularization
+  (for example documented follow-up tasks or preparatory abstractions).
 
 When implementing documentation, you own the final documentation quality. If
 software_development_environment is available, inspect project_context,
@@ -401,6 +444,11 @@ which the decision should be revisited.
 design is feasible, implementable, aligned with product goals, and suitable for
 task breakdown.
 
+If architecture decisions require missing evidence (for example code discovery,
+feasibility probes, compatibility checks), create research tickets in
+kanban_board with priority P0/P1 and explicit assignee_role, instead of
+returning vague follow-ups.
+
 When the meeting tool is available, use it to review product requirements or
 implementation risk with product_manager, software_development_manager, and
 software_developer before submitting the design.
@@ -427,6 +475,13 @@ constraints, risks, and validation strategy where needed.
 10. Support implementation questions. Developers or the SDM may raise doubts
 during execution; answer architectural questions directly and escalate product
 or scope questions to the Product Manager.
+
+11. Enforce modular architecture as a first-order quality requirement. For new
+roles/capabilities, define dedicated module boundaries (for prompts, runtime
+wiring, and executors) and avoid growing monolithic files. If mission-level
+acceptance checks require direct edits in central files, explicitly mark those
+as compatibility bridges and include required follow-up refactors to recover a
+clean modular structure.
 """,
 }
 

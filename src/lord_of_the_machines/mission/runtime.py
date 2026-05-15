@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Protocol
 
 from lord_of_the_machines.agent_tools import (
     ArtifactRegistryTool,
     EventBusTool,
+    KanbanBoardTool,
     MissionRegistryTool,
 )
 from lord_of_the_machines.mission.contracts import RoleTaskRequest, RoleTaskResult
@@ -27,6 +29,7 @@ MAX_FOLLOW_UP_ITEMS = 8
 MAX_FOLLOW_UP_HISTORY = 2
 MAX_ARTIFACT_CONTEXT_CONTENT_CHARS = 6_000
 MAX_STALE_FOLLOW_UP_REPEAT_COUNT = 2
+TASK_ID_VALUE_RE = re.compile(r"^K-\d{6,}$")
 
 
 class RoleExecutor(Protocol):
@@ -63,6 +66,21 @@ class MissionRuntimeConfig:
         }
     )
     auto_schedule_next_phase: bool = True
+    enable_implementation_task_queue: bool = True
+    implementation_task_metadata_key: str = "implementation_tasks"
+    task_board_done_column: str = "90-done"
+    task_board_blocked_column: str = "99-blocked"
+    task_board_done_statuses: tuple[str, ...] = ("done", "completed", "closed")
+    task_board_phase_columns: dict[str, str] = field(
+        default_factory=lambda: {
+            "product_direction": "01-product-direction",
+            "product_requirements": "02-product-requirements",
+            "technical_design": "03-technical-design",
+            "development_plan": "04-development-plan",
+            "implementation": "05-implementation",
+            "qa": "90-done",
+        }
+    )
 
 
 @dataclass(slots=True)
@@ -71,10 +89,12 @@ class MissionRuntime:
     event_bus: EventBusTool
     artifact_registry: ArtifactRegistryTool
     role_executors: dict[str, RoleExecutor]
+    kanban_board: KanbanBoardTool | None = None
     config: MissionRuntimeConfig = field(default_factory=MissionRuntimeConfig)
     _mission: dict[str, Any] = field(init=False)
     _events: dict[str, Any] = field(init=False)
     _artifacts: dict[str, Any] = field(init=False)
+    _kanban: dict[str, Any] | None = field(init=False, default=None)
     _logger: Any = field(init=False)
     _seeded_phase_keys: set[tuple[str, str]] = field(init=False, default_factory=set)
 
@@ -82,6 +102,7 @@ class MissionRuntime:
         self._mission = self.mission_registry.handlers()
         self._events = self.event_bus.handlers()
         self._artifacts = self.artifact_registry.handlers()
+        self._kanban = self.kanban_board.handlers() if self.kanban_board is not None else None
         self._logger = get_logger("mission.runtime")
         self._seeded_phase_keys = set()
 
@@ -125,6 +146,24 @@ class MissionRuntime:
                     "reason": f"Phase '{phase_to_seed}' requested.",
                 }
             )
+            if (
+                phase_to_seed == "implementation"
+                and self.config.enable_implementation_task_queue
+                and self._kanban is not None
+            ):
+                seeded_task_event = self._seed_next_implementation_task_event(
+                    mission_id=mission_id,
+                    mission=mission,
+                    phase=phase_to_seed,
+                    role=role,
+                    objective=objective,
+                    round_number=1,
+                    claimed_by=role,
+                )
+                if seeded_task_event is not None:
+                    seeded.append(seeded_task_event)
+                    self._seeded_phase_keys.add((mission_id, phase_to_seed))
+                    continue
             round_number = self._next_round_for_seed(mission_id, phase_to_seed)
             payload = {
                 "phase": phase_to_seed,
@@ -216,6 +255,14 @@ class MissionRuntime:
         if not objective:
             mission = self._mission["get_mission"]({"mission_id": mission_id})["mission"]
             objective = self._phase_objective(mission)
+        task_id_value = payload.get("task_id")
+        task_id = str(task_id_value).strip() if isinstance(task_id_value, str) and task_id_value.strip() else None
+        context_payload = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+        if task_id and isinstance(context_payload, dict):
+            task_context = self._board_task_context(task_id)
+            if task_context and "board_task" not in context_payload:
+                context_payload = dict(context_payload)
+                context_payload["board_task"] = task_context
 
         executor = self.role_executors.get(role)
         if executor is None:
@@ -226,7 +273,8 @@ class MissionRuntime:
                 "objective": objective,
                 "mission_id": mission_id,
                 "phase": phase,
-                "context": payload.get("context") if isinstance(payload.get("context"), dict) else {},
+                "task_id": task_id,
+                "context": context_payload,
                 "constraints": payload.get("constraints") if isinstance(payload.get("constraints"), list) else [],
                 "max_rounds": payload.get("max_rounds") or 1,
                 "continue_previous": bool(payload.get("continue_previous") is True),
@@ -312,6 +360,20 @@ class MissionRuntime:
         round_number: int,
     ) -> dict[str, Any]:
         if result.status == STATUS_COMPLETED:
+            if (
+                phase == "implementation"
+                and self.config.enable_implementation_task_queue
+                and self._kanban is not None
+                and request.task_id
+            ):
+                queue_outcome = self._handle_completed_implementation_task(
+                    mission_id=mission_id,
+                    role=role,
+                    request=request,
+                    result=result,
+                )
+                if queue_outcome is not None:
+                    return queue_outcome
             phase_summary = self._trim_text(result.summary, MAX_PHASE_NOTE_CHARS)
             self._mission["update_mission_phase"](
                 {
@@ -507,6 +569,7 @@ class MissionRuntime:
                 "phase": phase,
                 "role": role,
                 "objective": request.objective,
+                "task_id": request.task_id,
                 "context": follow_up_context,
                 "constraints": request.constraints,
                 "max_rounds": request.max_rounds,
@@ -599,6 +662,252 @@ class MissionRuntime:
             },
         )
         return {"status": result.status, "summary": phase_summary}
+
+    def _handle_completed_implementation_task(
+        self,
+        *,
+        mission_id: str,
+        role: str,
+        request: RoleTaskRequest,
+        result: RoleTaskResult,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        implementation_column = self._implementation_column()
+        done_column = self.config.task_board_done_column
+        done_status = self._task_board_done_statuses()[0]
+        task_id = str(request.task_id or "").strip()
+        if not task_id:
+            return None
+
+        try:
+            self._kanban["move_task"](
+                {
+                    "task_id": task_id,
+                    "to_column": done_column,
+                    "actor": role,
+                    "status": done_status,
+                    "note": f"Completed by {role}. {self._trim_text(result.summary, 400)}",
+                }
+            )
+        except Exception as exc:  # pragma: no cover - defensive guard
+            log_json(
+                self._logger,
+                "mission_runtime.task_queue.complete_move_failed",
+                {
+                    "mission_id": mission_id,
+                    "task_id": task_id,
+                    "error": str(exc),
+                },
+            )
+
+        pending_tasks = self._pending_implementation_tasks(mission_id)
+        if not pending_tasks:
+            return None
+
+        mission = self._mission["get_mission"]({"mission_id": mission_id})["mission"]
+        seeded_event = self._seed_next_implementation_task_event(
+            mission_id=mission_id,
+            mission=mission,
+            phase="implementation",
+            role=role,
+            objective=self._phase_objective(mission),
+            round_number=1,
+            claimed_by=role,
+        )
+        if seeded_event is not None:
+            next_task_id = str((seeded_event.get("payload") or {}).get("task_id") or "")
+            note = (
+                f"Completed task {task_id}. "
+                f"Queued next implementation task {next_task_id or '(unknown)'}."
+            )
+            self._mission["update_mission_phase"](
+                {
+                    "mission_id": mission_id,
+                    "phase": "implementation",
+                    "status": "in_progress",
+                    "notes": self._trim_text(note, MAX_PHASE_NOTE_CHARS),
+                }
+            )
+            log_timeline(
+                actor=self.config.consumer_id,
+                action="implementation task queued",
+                mission_id=mission_id,
+                phase="implementation",
+                details={
+                    "completed_task_id": task_id,
+                    "next_task_id": next_task_id,
+                    "remaining_tasks": len(pending_tasks),
+                },
+            )
+            return {
+                "status": "in_progress",
+                "reason": "implementation_tasks_remaining",
+                "completed_task_id": task_id,
+                "next_task_event": seeded_event,
+            }
+
+        blocked_note = (
+            f"Completed task {task_id}. Remaining implementation tasks exist "
+            "but no claimable task is ready (likely dependency or status issue)."
+        )
+        self._mission["update_mission_phase"](
+            {
+                "mission_id": mission_id,
+                "phase": "implementation",
+                "status": "in_progress",
+                "notes": self._trim_text(blocked_note, MAX_PHASE_NOTE_CHARS),
+            }
+        )
+        self._mission["update_mission_status"](
+            {
+                "mission_id": mission_id,
+                "status": "incomplete",
+                "reason": "Implementation queue has pending tasks with no claimable candidate.",
+            }
+        )
+        return {
+            "status": "incomplete",
+            "reason": "implementation_queue_blocked",
+            "completed_task_id": task_id,
+            "remaining_tasks": len(pending_tasks),
+        }
+
+    def _implementation_column(self) -> str:
+        return self.config.task_board_phase_columns.get("implementation", "05-implementation")
+
+    def _task_board_done_statuses(self) -> tuple[str, ...]:
+        statuses = [str(item).strip().lower() for item in self.config.task_board_done_statuses if str(item).strip()]
+        if not statuses:
+            return ("done",)
+        return tuple(statuses)
+
+    def _pending_implementation_tasks(self, mission_id: str) -> list[dict[str, Any]]:
+        if self._kanban is None:
+            return []
+        listed = self._kanban["list_tasks"](
+            {
+                "column": self._implementation_column(),
+                "include_body": False,
+                "mission_id": mission_id,
+            }
+        )
+        columns = list(listed.get("columns") or [])
+        if not columns:
+            return []
+        tasks = list(columns[0].get("tasks") or [])
+        done_statuses = set(self._task_board_done_statuses())
+        return [task for task in tasks if str(task.get("status") or "").strip().lower() not in done_statuses]
+
+    def _board_task_context(self, task_id: str) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        try:
+            loaded = self._kanban["get_task"]({"task_id": task_id, "include_body": True})
+        except FileNotFoundError:
+            return None
+        task = loaded.get("task")
+        if not isinstance(task, dict):
+            return None
+        body = str(task.get("body") or "")
+        if len(body) > MAX_ARTIFACT_CONTEXT_CONTENT_CHARS:
+            task = dict(task)
+            task["body"] = (
+                body[:MAX_ARTIFACT_CONTEXT_CONTENT_CHARS]
+                + "\n\n...[task body truncated by runtime context budget]..."
+            )
+            task["body_truncated"] = True
+        return task
+
+    def _seed_next_implementation_task_event(
+        self,
+        *,
+        mission_id: str,
+        mission: dict[str, Any],
+        phase: str,
+        role: str,
+        objective: str,
+        round_number: int,
+        claimed_by: str,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        implementation_column = self._implementation_column()
+
+        in_progress_listed = self._kanban["list_tasks"](
+            {
+                "column": implementation_column,
+                "include_body": True,
+                "mission_id": mission_id,
+                "statuses": ["in_progress"],
+            }
+        )
+        in_progress_columns = list(in_progress_listed.get("columns") or [])
+        in_progress_tasks = list(in_progress_columns[0].get("tasks") or []) if in_progress_columns else []
+        in_progress_tasks.sort(
+            key=lambda item: (
+                self._priority_rank(str(item.get("priority") or "P2")),
+                str(item.get("created_at") or ""),
+                str(item.get("task_id") or ""),
+            )
+        )
+        task = in_progress_tasks[0] if in_progress_tasks else None
+        if task is None:
+            claimed = self._kanban["claim_next_task"](
+                {
+                    "column": implementation_column,
+                    "agent_id": claimed_by,
+                    "agent_role": role,
+                    "statuses": ["ready"],
+                    "claimed_status": "in_progress",
+                    "respect_dependencies": True,
+                    "done_statuses": list(self._task_board_done_statuses()),
+                }
+            )
+            if not claimed.get("claimed"):
+                return None
+            task = claimed.get("task")
+        if not isinstance(task, dict):
+            return None
+
+        task_id = str(task.get("task_id") or "").strip()
+        if not task_id:
+            return None
+        task_title = str(task.get("title") or "Implementation task").strip()
+        task_body = str(task.get("body") or "").strip()
+        task_objective = f"{objective}\n\nTask {task_id}: {task_title}"
+        if task_body:
+            task_objective = f"{task_objective}\n\nTask details:\n{task_body}"
+        context = self._seed_context_for_phase(mission, phase)
+        context["task_execution_mode"] = "kanban_ticket"
+        context["board_task"] = task
+
+        event_result = self._events["publish_event"](
+            {
+                "topic": TOPIC_PHASE_REQUESTED,
+                "mission_id": mission_id,
+                "producer_role": self.config.consumer_id,
+                "payload": {
+                    "phase": phase,
+                    "role": role,
+                    "objective": task_objective,
+                    "task_id": task_id,
+                    "context": context,
+                    "round": round_number,
+                },
+            }
+        )
+        return event_result["event"]
+
+    def _priority_rank(self, value: str) -> int:
+        normalized = value.strip().upper()
+        if normalized == "P0":
+            return 0
+        if normalized == "P1":
+            return 1
+        if normalized == "P2":
+            return 2
+        return 3
 
     def _publish_artifact_if_present(
         self,
@@ -705,6 +1014,22 @@ class MissionRuntime:
         if phase_status.get(next_phase):
             return None
 
+        if (
+            current_phase == "development_plan"
+            and next_phase == "implementation"
+            and self.config.enable_implementation_task_queue
+            and self._kanban is not None
+        ):
+            queue_event = self._seed_implementation_queue_from_metadata(
+                mission=mission,
+                mission_id=mission_id,
+                role=self._role_for_phase(next_phase),
+                objective=self._phase_objective(mission),
+                completed_result=completed_result,
+            )
+            if queue_event is not None:
+                return queue_event
+
         role = self._role_for_phase(next_phase)
         objective = self._phase_objective(mission)
         self._mission["update_mission_phase"](
@@ -737,6 +1062,117 @@ class MissionRuntime:
             }
         )
         return event_result["event"]
+
+    def _seed_implementation_queue_from_metadata(
+        self,
+        *,
+        mission: dict[str, Any],
+        mission_id: str,
+        role: str,
+        objective: str,
+        completed_result: RoleTaskResult,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        metadata = completed_result.metadata if isinstance(completed_result.metadata, dict) else {}
+        raw_tasks = metadata.get(self.config.implementation_task_metadata_key)
+        if not isinstance(raw_tasks, list) or not raw_tasks:
+            return None
+
+        created_tasks: list[dict[str, Any]] = []
+        key_to_task_id: dict[str, str] = {}
+        dependency_keys: dict[str, list[str]] = {}
+        implementation_column = self._implementation_column()
+        for index, raw_item in enumerate(raw_tasks):
+            if not isinstance(raw_item, dict):
+                continue
+            title = str(raw_item.get("title") or "").strip()
+            if not title:
+                continue
+            description = str(raw_item.get("description") or raw_item.get("details") or "").strip()
+            priority = str(raw_item.get("priority") or "P2").strip().upper()
+            if priority not in {"P0", "P1", "P2", "P3"}:
+                priority = "P2"
+            task_type = str(raw_item.get("task_type") or "implementation").strip().lower() or "implementation"
+            task_key = str(raw_item.get("key") or raw_item.get("task_key") or f"TASK-{index + 1}").strip()
+            created = self._kanban["create_task"](
+                {
+                    "column": implementation_column,
+                    "title": title,
+                    "description": description,
+                    "status": "ready",
+                    "priority": priority,
+                    "task_type": task_type,
+                    "assignee_role": "software_developer",
+                    "metadata": {
+                        "mission_id": mission_id,
+                        "phase": "implementation",
+                        "source_phase": "development_plan",
+                        "task_key": task_key,
+                    },
+                }
+            )
+            task = created.get("task")
+            if isinstance(task, dict):
+                created_tasks.append(task)
+                created_task_id = str(task.get("task_id") or "").strip()
+                if created_task_id:
+                    key_to_task_id[task_key] = created_task_id
+                    raw_depends_on = raw_item.get("depends_on")
+                    if isinstance(raw_depends_on, list):
+                        dependency_keys[created_task_id] = [str(item).strip() for item in raw_depends_on if str(item).strip()]
+
+        for task_id, keys in dependency_keys.items():
+            resolved_dependencies: list[str] = []
+            for key in keys:
+                candidate = key.strip().upper()
+                if TASK_ID_VALUE_RE.fullmatch(candidate):
+                    resolved_dependencies.append(candidate)
+                    continue
+                mapped = key_to_task_id.get(key)
+                if mapped:
+                    resolved_dependencies.append(mapped)
+            if resolved_dependencies:
+                self._kanban["update_task"](
+                    {
+                        "task_id": task_id,
+                        "depends_on": resolved_dependencies,
+                        "actor": self.config.consumer_id,
+                    }
+                )
+
+        if not created_tasks:
+            return None
+
+        self._mission["update_mission_phase"](
+            {
+                "mission_id": mission_id,
+                "phase": "implementation",
+                "status": "requested",
+                "notes": (
+                    f"Implementation queue initialized with {len(created_tasks)} tasks "
+                    f"from '{self.config.implementation_task_metadata_key}'."
+                ),
+            }
+        )
+        seeded_event = self._seed_next_implementation_task_event(
+            mission_id=mission_id,
+            mission=mission,
+            phase="implementation",
+            role=role,
+            objective=objective,
+            round_number=1,
+            claimed_by=role,
+        )
+        if seeded_event is None:
+            return {
+                "queued_tasks": len(created_tasks),
+                "seeded_task_event": None,
+            }
+        return {
+            "queued_tasks": len(created_tasks),
+            "seeded_task_event": seeded_event,
+        }
 
     def _artifact_context(self, artifact: dict[str, Any] | None) -> dict[str, Any] | None:
         if not artifact:
@@ -789,6 +1225,13 @@ class MissionRuntime:
             if artifact_context:
                 context["previous_phase"] = previous_phase
                 context["previous_artifact"] = artifact_context
+        if mission_id and phase == "implementation" and self._kanban is not None:
+            pending_tasks = self._pending_implementation_tasks(mission_id)
+            if pending_tasks:
+                context["implementation_queue"] = {
+                    "pending_count": len(pending_tasks),
+                    "pending_task_ids": [str(item.get("task_id") or "") for item in pending_tasks[:10]],
+                }
         return context
 
     def _nearest_completed_previous_phase(self, phase: str, phase_status: dict[str, Any]) -> str | None:

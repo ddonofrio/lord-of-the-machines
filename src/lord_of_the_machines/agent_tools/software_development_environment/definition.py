@@ -23,6 +23,32 @@ def build_definition(tool_name: str) -> ToolDefinition:
         internal=True,
         methods=[
             ToolMethodDefinition(
+                name="run_system_command",
+                description=(
+                    "Execute an explicit OS-level system command directly on the host, gated by permission policy. "
+                    "Disabled by default and only enabled by explicit configuration for permitted roles. "
+                    "Dangerous: not restricted to the workspace. All invocations are audited. "
+                    "Use ONLY where platform policy allows; see documentation for limits and risk controls."
+                ),
+                arguments_schema={
+                    "type": "object",
+                    "properties": {
+                        "argv": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Command and arguments to execute, e.g., [\"ls\", \"-al\"]."
+                        },
+                        "timeout_seconds": {"type": "integer", "description": "Timeout in seconds.", "default": 60},
+                        "expected_exit_codes": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Which exit codes are considered OK. Default: [0]."
+                        },
+                    },
+                    "required": ["argv"],
+                },
+            ),
+            ToolMethodDefinition(
                 name="list_tree",
                 description="List a filtered directory tree within the workspace while ignoring heavy generated folders.",
                 arguments_schema={
