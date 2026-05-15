@@ -175,8 +175,8 @@ class WorkspaceOperationsMixin:
         request = SearchTextRequest.from_mapping(arguments)
         self._assert_read_allowed("search_text")
         start_path = self._resolve_path(request.path, allow_missing=False)
-        if not start_path.is_dir():
-            raise NotADirectoryError(f"Path is not a directory: {self._relative_path(start_path)}")
+        if not start_path.is_dir() and not start_path.is_file():
+            raise FileNotFoundError(f"Path does not exist: {self._relative_path(start_path)}")
 
         query = request.query
         regex_mode = request.regex
@@ -188,7 +188,8 @@ class WorkspaceOperationsMixin:
         pattern = re.compile(query if regex_mode else re.escape(query), flags)
 
         matches: list[SearchMatch] = []
-        for current_path in self._iter_paths(start_path):
+        candidate_paths = [start_path] if start_path.is_file() else self._iter_paths(start_path)
+        for current_path in candidate_paths:
             if not current_path.is_file():
                 continue
             if extensions and current_path.suffix.lower() not in extensions:
@@ -212,7 +213,11 @@ class WorkspaceOperationsMixin:
                 if len(matches) >= max_results:
                     self._record_activity(
                         "search_text_scan",
-                        {"query": query, "matches": len(matches)},
+                        {
+                            "query": query,
+                            "path": self._relative_path(start_path),
+                            "matches": len(matches),
+                        },
                         status="ok",
                         category="search",
                     )
@@ -220,7 +225,11 @@ class WorkspaceOperationsMixin:
 
         self._record_activity(
             "search_text_scan",
-            {"query": query, "matches": len(matches)},
+            {
+                "query": query,
+                "path": self._relative_path(start_path),
+                "matches": len(matches),
+            },
             status="ok",
             category="search",
         )

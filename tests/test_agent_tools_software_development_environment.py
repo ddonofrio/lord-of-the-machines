@@ -61,6 +61,16 @@ class SoftwareDevelopmentEnvironmentToolTests(unittest.TestCase):
         self.assertNotIn("node_modules", paths)
         self.assertNotIn(".git", paths)
 
+    def test_search_text_accepts_file_path(self) -> None:
+        result = self.tool.handlers()["search_text"](
+            {
+                "path": "src/app.py",
+                "query": "print",
+            }
+        )
+        self.assertEqual(len(result["matches"]), 1)
+        self.assertEqual(result["matches"][0]["path"], "src/app.py")
+
     def test_write_read_and_sha_guard(self) -> None:
         write_result = self.tool.handlers()["write_file"]({"path": "notes.txt", "content": "alpha"})
         read_result = self.tool.handlers()["read_file"]({"path": "notes.txt"})
@@ -156,6 +166,26 @@ class SoftwareDevelopmentEnvironmentToolTests(unittest.TestCase):
 
         with self.assertRaises(SoftwareDevelopmentEnvironmentPolicyError):
             tool.handlers()["run_command"]({"argv": ["python", "-c", "print('blocked')"]})
+
+    def test_read_only_definition_hides_write_and_command_methods(self) -> None:
+        tool = SoftwareDevelopmentEnvironmentTool(
+            self.root,
+            config=SoftwareDevelopmentEnvironmentToolConfig(
+                root_path=self.root,
+                permission_policy=SoftwareDevelopmentEnvironmentPermissionPolicy.read_only(),
+            ),
+        )
+        method_names = {method.name for method in tool.definition().methods}
+
+        self.assertIn("read_file", method_names)
+        self.assertIn("git_status", method_names)
+        self.assertNotIn("write_file", method_names)
+        self.assertNotIn("append_file", method_names)
+        self.assertNotIn("replace_text", method_names)
+        self.assertNotIn("replace_lines", method_names)
+        self.assertNotIn("insert_text", method_names)
+        self.assertNotIn("run_command", method_names)
+        self.assertNotIn("run_diagnostics", method_names)
 
     def test_tool_installs_on_base_agent(self) -> None:
         client = FakeClient(

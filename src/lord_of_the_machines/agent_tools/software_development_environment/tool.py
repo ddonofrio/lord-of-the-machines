@@ -46,7 +46,10 @@ class SoftwareDevelopmentEnvironmentTool(
         agent.add_tool(self.definition(), handlers=self.handlers())
 
     def definition(self) -> ToolDefinition:
-        return build_definition(self.TOOL_NAME)
+        definition = build_definition(self.TOOL_NAME)
+        allowed = self._allowed_method_names()
+        definition.methods = [method for method in definition.methods if method.name in allowed]
+        return definition
 
     def handlers(self) -> dict[str, ToolHandler]:
         handlers = {
@@ -71,3 +74,36 @@ class SoftwareDevelopmentEnvironmentTool(
             "activity_log": self._activity,
         }
         return self._instrument_handlers(handlers)
+
+    def _allowed_method_names(self) -> set[str]:
+        policy = self.config.permission_policy
+        allowed: set[str] = set()
+        if policy.allow_read_operations:
+            allowed.update(
+                {
+                    "list_tree",
+                    "find_files",
+                    "read_file",
+                    "read_files",
+                    "file_metadata",
+                    "search_text",
+                    "project_context",
+                    "list_changes",
+                    "activity_log",
+                }
+            )
+        else:
+            allowed.update({"list_changes", "activity_log"})
+        if policy.allow_write_operations:
+            allowed.update({"write_file", "append_file", "replace_text", "replace_lines", "insert_text"})
+        if policy.allow_move_operations:
+            allowed.add("move_path")
+        if policy.allow_delete_operations:
+            allowed.add("delete_path")
+        if policy.allow_command_execution:
+            allowed.add("run_command")
+        if policy.allow_diagnostics:
+            allowed.add("run_diagnostics")
+        if policy.allow_git_inspection:
+            allowed.add("git_status")
+        return allowed

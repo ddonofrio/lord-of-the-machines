@@ -92,6 +92,7 @@ class MissionRunnerTests(unittest.TestCase):
                     RoleTaskResult(status="completed", summary="plan done")
                 ),
                 "software_developer": StaticExecutor(RoleTaskResult(status="completed", summary="implementation done")),
+                "qa_agent": StaticExecutor(RoleTaskResult(status="completed", summary="qa done")),
             },
             config=MissionRuntimeConfig(max_events_per_run=5),
         )
@@ -116,6 +117,7 @@ class MissionRunnerTests(unittest.TestCase):
         self.assertEqual(phase_status["technical_design"], "completed")
         self.assertEqual(phase_status["development_plan"], "completed")
         self.assertEqual(phase_status["implementation"], "completed")
+        self.assertEqual(phase_status["qa"], "completed")
 
     def test_runner_loads_mission_list_from_json_file(self) -> None:
         mission_file = self._write_missions_file(

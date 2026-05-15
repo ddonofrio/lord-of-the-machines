@@ -213,7 +213,7 @@ def build_definition(tool_name: str) -> ToolDefinition:
             ),
             ToolMethodDefinition(
                 name="search_text",
-                description="Search text or regex patterns across project files.",
+                description="Search text or regex patterns across project files under a directory, or inside one specific file path.",
                 arguments_schema={
                     "type": "object",
                     "additionalProperties": False,

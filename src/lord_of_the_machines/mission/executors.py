@@ -106,6 +106,9 @@ def install_read_only_software_workspace_tool(
         workspace_root,
         config=SoftwareDevelopmentEnvironmentToolConfig(
             root_path=workspace_root,
+            read_char_limit=3_000,
+            default_search_max_results=80,
+            default_tree_max_entries=250,
             permission_policy=SoftwareDevelopmentEnvironmentPermissionPolicy.read_only(),
             execution_policy=SoftwareDevelopmentEnvironmentExecutionPolicy(
                 require_confirmation_for_destructive_operations=True,

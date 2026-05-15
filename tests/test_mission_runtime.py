@@ -221,6 +221,266 @@ class MissionRuntimeTests(unittest.TestCase):
         self.assertFalse(executor.calls[0].continue_previous)
         self.assertTrue(executor.calls[1].continue_previous)
 
+    def test_recoverable_limit_follow_up_resets_continue_previous(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_followup_reset_continue_previous",
+                "title": "Follow-Up Reset Continue Previous",
+                "description": "Recoverable limit results should reset model conversation continuity.",
+            }
+        )
+        executor = FakeRoleExecutor(
+            RoleTaskResult(
+                status="needs_follow_up",
+                summary="Maximum tool rounds reached before producing a reply.",
+                metadata={"normalized_from_failed": True, "forced_structured_submit": True},
+            )
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_director": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.seed_pending_missions()
+        runtime.run_once()
+
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_followup_reset_continue_previous"}
+        )["events"]
+        self.assertEqual(len(events), 2)
+        self.assertFalse(events[-1]["payload"]["continue_previous"])
+
+    def test_technical_design_follow_up_disables_continue_previous(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_technical_design_reset",
+                "title": "Technical Design Reset",
+                "description": "Architect follow-up should reset conversation history between rounds.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_technical_design_reset",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_technical_design_reset",
+                "phase": "product_requirements",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_technical_design_reset",
+                "phase": "technical_design",
+                "status": "requested",
+                "notes": "start",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_technical_design_reset",
+                "status": "in_progress",
+                "reason": "start technical design",
+            }
+        )
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_technical_design_reset",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "technical_design",
+                    "role": "software_architect",
+                    "objective": "Produce technical design",
+                    "round": 1,
+                },
+            }
+        )
+        executor = FakeRoleExecutor(RoleTaskResult(status="needs_follow_up", summary="Need a small follow-up."))
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"software_architect": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.run_once()
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_technical_design_reset"}
+        )["events"]
+        self.assertEqual(len(events), 2)
+        self.assertFalse(events[-1]["payload"]["continue_previous"])
+
+    def test_development_plan_follow_up_disables_continue_previous(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_development_plan_reset",
+                "title": "Development Plan Reset",
+                "description": "SDM follow-up should reset conversation history between rounds.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_development_plan_reset",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_development_plan_reset",
+                "phase": "product_requirements",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_development_plan_reset",
+                "phase": "technical_design",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_development_plan_reset",
+                "phase": "development_plan",
+                "status": "requested",
+                "notes": "start",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_development_plan_reset",
+                "status": "in_progress",
+                "reason": "start development plan",
+            }
+        )
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_development_plan_reset",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "development_plan",
+                    "role": "software_development_manager",
+                    "objective": "Produce development plan",
+                    "round": 1,
+                },
+            }
+        )
+        executor = FakeRoleExecutor(RoleTaskResult(status="needs_follow_up", summary="Need a small follow-up."))
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"software_development_manager": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.run_once()
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_development_plan_reset"}
+        )["events"]
+        self.assertEqual(len(events), 2)
+        self.assertFalse(events[-1]["payload"]["continue_previous"])
+
+    def test_implementation_follow_up_disables_continue_previous(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "title": "Implementation Reset",
+                "description": "Developer follow-up should reset conversation history between rounds.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "phase": "product_direction",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "phase": "product_requirements",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "phase": "technical_design",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "phase": "development_plan",
+                "status": "completed",
+                "notes": "done",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "phase": "implementation",
+                "status": "requested",
+                "notes": "start",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {
+                "mission_id": "mission_implementation_reset",
+                "status": "in_progress",
+                "reason": "start implementation",
+            }
+        )
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_implementation_reset",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "implementation",
+                    "role": "software_developer",
+                    "objective": "Implement task",
+                    "round": 1,
+                },
+            }
+        )
+        executor = FakeRoleExecutor(RoleTaskResult(status="needs_follow_up", summary="Need a small follow-up."))
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"software_developer": executor},
+            config=MissionRuntimeConfig(max_events_per_run=5, max_follow_up_rounds=3, phase_transitions={}),
+        )
+
+        runtime.run_once()
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_implementation_reset"}
+        )["events"]
+        self.assertEqual(len(events), 2)
+        self.assertFalse(events[-1]["payload"]["continue_previous"])
+
     def test_contract_violation_forces_follow_up(self) -> None:
         self.mission_registry.handlers()["create_mission"](
             {

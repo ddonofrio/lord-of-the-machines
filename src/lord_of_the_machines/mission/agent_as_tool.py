@@ -146,7 +146,7 @@ class AgentAsToolBridge:
                     repair_prompt,
                     tool_name=self.config.result_tool_name,
                     method_name=self.config.result_method_name,
-                    continue_previous=True,
+                    continue_previous=False,
                     disabled_tools=disabled_tools,
                     max_tool_rounds=self.config.structured_result_max_tool_rounds,
                     **query_overrides,
@@ -271,6 +271,34 @@ class AgentAsToolBridge:
 
     def _build_prompt(self, request: RoleTaskRequest) -> str:
         payload = request.to_mapping()
+        focused_guidance = ""
+        if self.config.role_name == "software_architect" and (request.phase or "") == "technical_design":
+            focused_guidance = (
+                "Technical-design execution rules for this run:\n"
+                "- Do not call meeting.run_meeting in this task.\n"
+                "- Keep exploration tight: at most 6 tool calls total.\n"
+                "- Prefer one read_files call on the most relevant modules, then synthesize.\n"
+                "- If the referenced files exist, submit status='completed' with concrete module-level design.\n"
+                "- Use status='needs_follow_up' only when a truly missing external dependency blocks design.\n"
+            )
+        if self.config.role_name == "software_development_manager" and (request.phase or "") == "development_plan":
+            focused_guidance = (
+                "Development-plan execution rules for this run:\n"
+                "- Do not call meeting.run_meeting in this task.\n"
+                "- Keep exploration tight: at most 6 tool calls total.\n"
+                "- Prefer one read_files call on the most relevant modules, then synthesize.\n"
+                "- Submit status='completed' with a concrete file-by-file implementation plan.\n"
+                "- Use status='needs_follow_up' only when a truly missing external dependency blocks planning.\n"
+            )
+        if self.config.role_name == "software_developer" and (request.phase or "") == "implementation":
+            focused_guidance = (
+                "Implementation execution rules for this run:\n"
+                "- Do not call meeting.run_meeting in this task.\n"
+                "- Keep exploration tight: at most 10 tool calls total before first write.\n"
+                "- Read only target files needed for the current edits, then implement immediately.\n"
+                "- Apply concrete file edits, run required diagnostics, and submit status='completed' with evidence.\n"
+                "- Use status='needs_follow_up' only when a truly missing external dependency blocks implementation.\n"
+            )
         return (
             f"Role: {self.config.role_name}\n"
             "Execute the task and then call this tool with your structured result:\n"
@@ -292,6 +320,9 @@ class AgentAsToolBridge:
             '"follow_ups":["string"],'
             '"metadata":{}'
             "}\n"
+            "Prioritize finishing the task within limited tool rounds. Avoid exhaustive browsing.\n"
+            "Use only the minimum file reads/searches needed to produce a concrete result.\n"
+            "If uncertainty remains, submit status='needs_follow_up' with specific required_changes.\n"
             "If any string field is too long, first call pagination.append_page "
             "for a stable target until status='stop', then use the matching "
             "pagination://<target> reference. Never submit a pagination:// "
@@ -299,6 +330,7 @@ class AgentAsToolBridge:
             "When the content is already in a project file, either submit the "
             "literal final content or a concise implementation report; do not "
             "invent unresolved pagination references.\n"
+            f"{focused_guidance}"
             "After calling that tool, optionally call reply.send_message with a short human summary.\n"
             f"Task payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
@@ -374,7 +406,7 @@ class AgentAsToolBridge:
                 forced_prompt,
                 tool_name=self.config.result_tool_name,
                 method_name=self.config.result_method_name,
-                continue_previous=True,
+                continue_previous=False,
                 disabled_tools=forced_disabled_tools,
                 max_tool_rounds=max(1, int(self.config.forced_submit_max_tool_rounds)),
                 **query_overrides,

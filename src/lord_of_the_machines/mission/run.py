@@ -92,20 +92,22 @@ def build_default_runner(
         )
     )
 
-    product_director_agent = factory.create("product_director", max_tool_rounds=10)
-    product_manager_agent = factory.create("product_manager", max_tool_rounds=10)
-    software_architect_agent = factory.create("software_architect", max_tool_rounds=10)
-    software_development_manager_agent = factory.create("software_development_manager", max_tool_rounds=10)
-    software_developer_agent = factory.create("software_developer", max_tool_rounds=14)
+    product_director_agent = factory.create("product_director", max_tool_rounds=14)
+    product_manager_agent = factory.create("product_manager", max_tool_rounds=14)
+    software_architect_agent = factory.create("software_architect", max_tool_rounds=24)
+    software_development_manager_agent = factory.create("software_development_manager", max_tool_rounds=20)
+    software_developer_agent = factory.create("software_developer", max_tool_rounds=24)
+    qa_agent = factory.create("qa_agent", max_tool_rounds=20)
     role_agents = {
         "product_director": product_director_agent,
         "product_manager": product_manager_agent,
         "software_architect": software_architect_agent,
         "software_development_manager": software_development_manager_agent,
         "software_developer": software_developer_agent,
+        "qa_agent": qa_agent,
     }
 
-    meeting_organizer_agent = factory.create("meeting_organizer", max_tool_rounds=12)
+    meeting_organizer_agent = factory.create("meeting_organizer", max_tool_rounds=16)
     meeting_tool = MeetingToolAgent(
         meeting_organizer_agent,
         participant_agents=role_agents,
@@ -119,6 +121,10 @@ def build_default_runner(
     )
     install_read_only_software_workspace_tool(
         software_development_manager_agent,
+        workspace_root=repo_root,
+    )
+    install_read_only_software_workspace_tool(
+        qa_agent,
         workspace_root=repo_root,
     )
 
@@ -147,6 +153,10 @@ def build_default_runner(
             allowed_write_prefixes=allowed_write_prefixes,
         ),
     )
+    qa_agent_executor = BaseAgentRoleExecutor(
+        qa_agent,
+        config=BaseAgentRoleExecutorConfig(role_name="qa_agent"),
+    )
 
     runtime = MissionRuntime(
         mission_registry=mission_registry,
@@ -158,6 +168,7 @@ def build_default_runner(
             "software_architect": software_architect_executor,
             "software_development_manager": software_development_manager_executor,
             "software_developer": software_developer_executor,
+            "qa_agent": qa_agent_executor,
         },
         config=MissionRuntimeConfig(
             max_events_per_run=max_events_per_cycle,

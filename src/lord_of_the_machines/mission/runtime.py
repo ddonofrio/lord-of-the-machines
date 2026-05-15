@@ -49,6 +49,7 @@ class MissionRuntimeConfig:
             "technical_design": "software_architect",
             "development_plan": "software_development_manager",
             "implementation": "software_developer",
+            "qa": "qa_agent",
         }
     )
     phase_transitions: dict[str, str] = field(
@@ -57,6 +58,8 @@ class MissionRuntimeConfig:
             "product_requirements": "technical_design",
             "technical_design": "development_plan",
             "development_plan": "implementation",
+            "implementation": "qa",
+            "qa": None,
         }
     )
     auto_schedule_next_phase: bool = True
@@ -364,9 +367,16 @@ class MissionRuntime:
             return {"status": result.status, "artifact": artifact, "next_phase_event": next_phase_event}
 
         if result.status == STATUS_NEEDS_FOLLOW_UP:
-            phase_note = self._follow_up_phase_note(result=result, round_number=round_number)
+            result_summary = self._trim_text(
+                self._sanitize_follow_up_summary(result),
+                MAX_FOLLOW_UP_SUMMARY_CHARS,
+            )
+            phase_note = self._follow_up_phase_note(
+                result=result,
+                round_number=round_number,
+                summary=result_summary,
+            )
             note_with_limit = self._trim_text(phase_note, MAX_PHASE_NOTE_CHARS)
-            result_summary = self._trim_text(result.summary, MAX_FOLLOW_UP_SUMMARY_CHARS)
             if round_number >= self.config.max_follow_up_rounds:
                 self._mission["update_mission_phase"](
                     {
@@ -500,7 +510,11 @@ class MissionRuntime:
                 "context": follow_up_context,
                 "constraints": request.constraints,
                 "max_rounds": request.max_rounds,
-                "continue_previous": True,
+                "continue_previous": self._should_continue_previous(
+                    result=result,
+                    phase=phase,
+                    role=role,
+                ),
                 "metadata": request.metadata,
                 "round": round_number + 1,
             }
@@ -820,8 +834,8 @@ class MissionRuntime:
                 max_round = max(max_round, round_value)
         return max_round + 1 if max_round > 0 else 1
 
-    def _follow_up_phase_note(self, *, result: RoleTaskResult, round_number: int) -> str:
-        lines = [f"Follow-up round {round_number}: {result.summary}".strip()]
+    def _follow_up_phase_note(self, *, result: RoleTaskResult, round_number: int, summary: str) -> str:
+        lines = [f"Follow-up round {round_number}: {summary}".strip()]
         if result.required_changes:
             lines.append("Required changes: " + "; ".join(result.required_changes))
         if result.follow_ups:
@@ -829,6 +843,50 @@ class MissionRuntime:
         if result.unresolved_questions:
             lines.append("Open questions: " + "; ".join(result.unresolved_questions))
         return "\n".join(lines)
+
+    def _should_continue_previous(self, *, result: RoleTaskResult, phase: str, role: str) -> bool:
+        # Technical design rounds often require many tool calls and can quickly hit
+        # context/rate limits. Keep follow-up context explicit in payload, but
+        # reset conversation history between rounds for this phase.
+        if phase == "technical_design" and role == "software_architect":
+            return False
+        if phase == "development_plan" and role == "software_development_manager":
+            return False
+        if phase == "implementation" and role == "software_developer":
+            return False
+        if self._is_recoverable_limit_result(result):
+            return False
+        return True
+
+    def _sanitize_follow_up_summary(self, result: RoleTaskResult) -> str:
+        summary = str(result.summary or "").strip()
+        if not summary:
+            return summary
+        if self._is_recoverable_limit_result(result):
+            return (
+                "Previous round hit a recoverable execution/context limit. "
+                "Continue from the current workspace state with fewer, more focused tool calls, "
+                "and submit concrete output for this phase."
+            )
+        return summary
+
+    def _is_recoverable_limit_result(self, result: RoleTaskResult) -> bool:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        if metadata.get("forced_structured_submit"):
+            return True
+        if not metadata.get("normalized_from_failed"):
+            return False
+        summary = str(result.summary or "").lower()
+        signals = (
+            "maximum tool rounds",
+            "tool rounds",
+            "request too large",
+            "context window",
+            "rate limit",
+            "no additional exploration",
+            "recoverable execution limit",
+        )
+        return any(signal in summary for signal in signals)
 
     def _trim_text(self, value: str, max_chars: int) -> str:
         if max_chars <= 0:
