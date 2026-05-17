@@ -132,6 +132,60 @@ Implementation Task Metadata
         self.assertEqual(tasks[0]["key"], "K-000101")
         self.assertEqual(tasks[1]["depends_on"], ["K-000101"])
 
+    def test_extracts_implementation_tasks_from_kanban_fallback(self) -> None:
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "completed",
+                            "summary": "Plan ready.",
+                            "artifact_type": "development_plan",
+                            "artifact_title": "Development Plan",
+                            "artifact_content": "# Development Plan\\nNo structured metadata.",
+                        },
+                    },
+                )
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+
+        def list_tasks(_: dict[str, object]) -> dict[str, object]:
+            return {
+                "columns": [
+                    {
+                        "tasks": [
+                            {
+                                "task_id": "K-000222",
+                                "title": "Split mission runtime helpers",
+                                "status": "ready",
+                                "priority": "P0",
+                                "task_type": "implementation",
+                                "assignee_role": "software_developer",
+                                "depends_on": [],
+                                "body": "Refactor runtime internals into smaller modules.",
+                                "metadata": {"mission_id": "m_sdm"},
+                            }
+                        ]
+                    }
+                ]
+            }
+
+        executor = SoftwareDevelopmentManagerRoleExecutor(
+            agent,
+            kanban_handlers={"list_tasks": list_tasks},
+        )
+
+        result = executor.execute_task(self._make_request())
+
+        self.assertEqual(result.status, "completed")
+        tasks = list(result.metadata["implementation_tasks"])
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["key"], "K-000222")
+        self.assertEqual(tasks[0]["priority"], "P0")
+
 
 if __name__ == "__main__":
     unittest.main()

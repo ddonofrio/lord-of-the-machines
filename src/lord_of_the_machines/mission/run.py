@@ -155,6 +155,7 @@ def build_default_runner(
     software_development_manager_executor = SoftwareDevelopmentManagerRoleExecutor(
         software_development_manager_agent,
         config=SoftwareDevelopmentManagerRoleExecutorConfig(),
+        kanban_handlers=kanban_board.handlers(),
     )
     software_developer_executor = SoftwareDeveloperRoleExecutor(
         software_developer_agent,

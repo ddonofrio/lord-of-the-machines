@@ -159,8 +159,10 @@ class SoftwareDevelopmentManagerRoleExecutor:
         agent: BaseAgent,
         *,
         config: SoftwareDevelopmentManagerRoleExecutorConfig | None = None,
+        kanban_handlers: dict[str, Any] | None = None,
     ) -> None:
         self.config = config or SoftwareDevelopmentManagerRoleExecutorConfig()
+        self._kanban_handlers = kanban_handlers
         self._base = BaseAgentRoleExecutor(
             agent,
             config=BaseAgentRoleExecutorConfig(
@@ -183,6 +185,8 @@ class SoftwareDevelopmentManagerRoleExecutor:
             normalized_tasks = self._extract_tasks_from_artifact_content(result.artifact_content or "")
         if not normalized_tasks:
             normalized_tasks = self._extract_tasks_from_ticket_annotations(result.artifact_content or "")
+        if not normalized_tasks:
+            normalized_tasks = self._extract_tasks_from_kanban_board(request)
 
         if len(normalized_tasks) < self.config.minimum_implementation_tasks:
             return RoleTaskResult(
@@ -311,6 +315,97 @@ class SoftwareDevelopmentManagerRoleExecutor:
         if "ops" in text or "infra" in text:
             return "ops"
         return "implementation"
+
+    def _extract_tasks_from_kanban_board(self, request: RoleTaskRequest) -> list[dict[str, Any]]:
+        if self._kanban_handlers is None:
+            return []
+        list_tasks = self._kanban_handlers.get("list_tasks")
+        if not callable(list_tasks):
+            return []
+        try:
+            listed = list_tasks({"column": "04-development-plan", "include_body": True})
+        except Exception:
+            return []
+        columns = list(listed.get("columns") or [])
+        if not columns:
+            return []
+        raw_tasks = list(columns[0].get("tasks") or [])
+        if not raw_tasks:
+            return []
+
+        scored: list[tuple[int, dict[str, Any]]] = []
+        mission_id = str(request.mission_id or "").strip()
+        for task in raw_tasks:
+            if not isinstance(task, dict):
+                continue
+            title = str(task.get("title") or "").strip()
+            if not title:
+                continue
+            status = str(task.get("status") or "").strip().lower()
+            if status not in {"ready", "in_progress", "new"}:
+                continue
+            metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+            task_mission_id = str(metadata.get("mission_id") or "").strip()
+            score = 0
+            if mission_id and task_mission_id == mission_id:
+                score += 100
+            assignee_role = str(task.get("assignee_role") or "").strip().lower()
+            if assignee_role == "software_developer":
+                score += 10
+            priority = str(task.get("priority") or "P2").strip().upper()
+            if priority == "P0":
+                score += 5
+            elif priority == "P1":
+                score += 3
+            elif priority == "P2":
+                score += 1
+            scored.append((score, task))
+
+        if not scored:
+            return []
+        scored.sort(
+            key=lambda item: (
+                -item[0],
+                self._priority_sort_key(str(item[1].get("priority") or "P2")),
+                str(item[1].get("created_at") or ""),
+                str(item[1].get("task_id") or ""),
+            )
+        )
+        selected = [item[1] for item in scored[:12]]
+        normalized: list[dict[str, Any]] = []
+        for index, task in enumerate(selected):
+            title = str(task.get("title") or "").strip()
+            task_id = str(task.get("task_id") or f"TASK-{index + 1}").strip()
+            description = str(task.get("body") or "").strip() or title
+            priority = str(task.get("priority") or "P2").strip().upper()
+            if priority not in {"P0", "P1", "P2", "P3"}:
+                priority = "P2"
+            task_type = str(task.get("task_type") or "implementation").strip().lower()
+            if task_type not in {"implementation", "research", "qa", "ops", "documentation"}:
+                task_type = self._infer_task_type(title, description)
+            raw_depends = task.get("depends_on") if isinstance(task.get("depends_on"), list) else []
+            depends_on = [str(item).strip() for item in raw_depends if str(item).strip()]
+            normalized.append(
+                {
+                    "key": task_id,
+                    "title": title,
+                    "description": description,
+                    "priority": priority,
+                    "task_type": task_type,
+                    "depends_on": depends_on,
+                }
+            )
+        return normalized
+
+    def _priority_sort_key(self, value: str) -> int:
+        normalized = value.strip().upper()
+        if normalized == "P0":
+            return 0
+        if normalized == "P1":
+            return 1
+        if normalized == "P2":
+            return 2
+        return 3
 
 
 class SoftwareDeveloperRoleExecutor:
