@@ -65,7 +65,7 @@ class AgentAsToolConfig:
     structured_result_retries: int = 2
     disable_reply_tool_for_structured_result: bool = True
     structured_result_max_tool_rounds: int | None = None
-    structured_result_max_output_tokens: int | None = 1536
+    structured_result_max_output_tokens: int | None = 3072
     structured_result_parallel_tool_calls: bool = False
     force_structured_submit_on_failure: bool = True
     forced_submit_max_tool_rounds: int = 1
@@ -287,6 +287,8 @@ class AgentAsToolBridge:
                 "- Do not call meeting.run_meeting in this task.\n"
                 "- Keep exploration tight: at most 6 tool calls total.\n"
                 "- Prefer one read_files call on the most relevant modules, then synthesize.\n"
+                "- Keep artifact_content concise (max ~1200 words). Do not paste raw board dumps.\n"
+                "- Always return metadata.implementation_tasks as a compact structured list.\n"
                 "- Submit status='completed' with a concrete file-by-file implementation plan.\n"
                 "- Use status='needs_follow_up' only when a truly missing external dependency blocks planning.\n"
             )
