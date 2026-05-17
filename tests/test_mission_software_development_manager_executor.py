@@ -92,6 +92,46 @@ Implementation Task Metadata
         self.assertIn("structured implementation task metadata", result.summary.lower())
         self.assertTrue(result.required_changes)
 
+    def test_extracts_implementation_tasks_from_ticket_annotations(self) -> None:
+        artifact_content = """
+# Development Plan
+
+1. **Refactor runtime orchestration**
+   - Split phase scheduling and queue handoff into smaller helpers.
+   - [Ticket: K-000101]
+
+2. **Add diagnostics and QA validation updates**
+   - Add tests and post-refactor diagnostics checks.
+   - [Ticket: K-000102, depends on: K-000101]
+"""
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "completed",
+                            "summary": "Plan ready.",
+                            "artifact_type": "development_plan",
+                            "artifact_title": "Development Plan",
+                            "artifact_content": artifact_content,
+                        },
+                    },
+                )
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+        executor = SoftwareDevelopmentManagerRoleExecutor(agent)
+
+        result = executor.execute_task(self._make_request())
+
+        self.assertEqual(result.status, "completed")
+        tasks = list(result.metadata["implementation_tasks"])
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(tasks[0]["key"], "K-000101")
+        self.assertEqual(tasks[1]["depends_on"], ["K-000101"])
+
 
 if __name__ == "__main__":
     unittest.main()

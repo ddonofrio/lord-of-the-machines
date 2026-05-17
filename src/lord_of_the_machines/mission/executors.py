@@ -26,6 +26,9 @@ IMPLEMENTATION_TASKS_CODE_BLOCK_RE = re.compile(
     r"```(?:json)?\s*(\[[\s\S]*?\])\s*```",
     re.IGNORECASE,
 )
+PLAN_TASK_TITLE_RE = re.compile(r"^\s*\d+\.\s+\*\*(.+?)\*\*\s*$")
+PLAN_TASK_TICKET_LINE_RE = re.compile(r"\[Ticket:\s*(.+?)\]\s*$", re.IGNORECASE)
+PLAN_TASK_ID_RE = re.compile(r"K-\d{6,}")
 
 
 @dataclass(slots=True)
@@ -178,6 +181,8 @@ class SoftwareDevelopmentManagerRoleExecutor:
         normalized_tasks = self._normalize_tasks(raw_tasks)
         if not normalized_tasks:
             normalized_tasks = self._extract_tasks_from_artifact_content(result.artifact_content or "")
+        if not normalized_tasks:
+            normalized_tasks = self._extract_tasks_from_ticket_annotations(result.artifact_content or "")
 
         if len(normalized_tasks) < self.config.minimum_implementation_tasks:
             return RoleTaskResult(
@@ -247,6 +252,65 @@ class SoftwareDevelopmentManagerRoleExecutor:
                 }
             )
         return normalized
+
+    def _extract_tasks_from_ticket_annotations(self, content: str) -> list[dict[str, Any]]:
+        if not content.strip():
+            return []
+        tasks: list[dict[str, Any]] = []
+        current_title: str | None = None
+        current_description_lines: list[str] = []
+        for raw_line in content.splitlines():
+            line = raw_line.rstrip()
+            title_match = PLAN_TASK_TITLE_RE.match(line)
+            if title_match:
+                current_title = title_match.group(1).strip()
+                current_description_lines = []
+                continue
+
+            if current_title is None:
+                continue
+
+            ticket_match = PLAN_TASK_TICKET_LINE_RE.search(line)
+            if ticket_match:
+                ticket_fragment = ticket_match.group(1)
+                task_ids = PLAN_TASK_ID_RE.findall(ticket_fragment)
+                if task_ids:
+                    key = task_ids[0]
+                    depends_on = task_ids[1:]
+                    description = " ".join(current_description_lines).strip() or current_title
+                    task_type = self._infer_task_type(current_title, description)
+                    tasks.append(
+                        {
+                            "key": key,
+                            "title": current_title,
+                            "description": description,
+                            "priority": "P1",
+                            "task_type": task_type,
+                            "depends_on": depends_on,
+                        }
+                    )
+                current_title = None
+                current_description_lines = []
+                continue
+
+            cleaned = line.strip()
+            if cleaned.startswith("- "):
+                cleaned = cleaned[2:].strip()
+            if cleaned:
+                current_description_lines.append(cleaned)
+        return tasks
+
+    def _infer_task_type(self, title: str, description: str) -> str:
+        text = f"{title} {description}".lower()
+        if "qa" in text or "test" in text or "diagnostic" in text:
+            return "qa"
+        if "doc" in text or "report" in text:
+            return "documentation"
+        if "research" in text or "investigat" in text:
+            return "research"
+        if "ops" in text or "infra" in text:
+            return "ops"
+        return "implementation"
 
 
 class SoftwareDeveloperRoleExecutor:
