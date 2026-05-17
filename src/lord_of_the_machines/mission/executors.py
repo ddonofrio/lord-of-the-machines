@@ -486,12 +486,13 @@ class SoftwareDeveloperRoleExecutor:
         changes = self._tool_handlers["list_changes"]({})
         changed_paths = list(changes.get("changed_paths") or [])
         if self.config.require_changed_files and not changed_paths:
-            return RoleTaskResult(
-                status=STATUS_NEEDS_FOLLOW_UP,
-                summary="No files were changed during implementation.",
-                follow_ups=["Apply at least one scoped code change and retry."],
-                metadata={"changes": changes},
-            )
+            if not self._allow_no_change_completion(request=request, result=result):
+                return RoleTaskResult(
+                    status=STATUS_NEEDS_FOLLOW_UP,
+                    summary="No files were changed during implementation.",
+                    follow_ups=["Apply at least one scoped code change and retry."],
+                    metadata={"changes": changes},
+                )
 
         invalid_paths = [path for path in changed_paths if not self._is_allowed_path(path)]
         if invalid_paths:
@@ -563,6 +564,25 @@ class SoftwareDeveloperRoleExecutor:
             result.artifact_format = "markdown"
             result.artifact_content = self._build_artifact_content(changed_paths, diagnostics)
         return result
+
+    def _allow_no_change_completion(self, *, request: RoleTaskRequest, result: RoleTaskResult) -> bool:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        if bool(metadata.get("no_changes_required")):
+            return True
+        context = request.context if isinstance(request.context, dict) else {}
+        board_task = context.get("board_task") if isinstance(context.get("board_task"), dict) else {}
+        task_type = str(board_task.get("task_type") or "").strip().lower()
+        if task_type in {"research", "qa", "documentation"}:
+            return True
+        summary = str(result.summary or "").strip().lower()
+        no_change_signals = (
+            "no changes required",
+            "already up to date",
+            "no dead code",
+            "no dead code instances",
+            "no removal was performed",
+        )
+        return any(signal in summary for signal in no_change_signals)
 
     def _correct_false_workspace_block(self, result: RoleTaskResult) -> RoleTaskResult | None:
         if result.status not in {STATUS_BLOCKED, STATUS_NEEDS_FOLLOW_UP}:

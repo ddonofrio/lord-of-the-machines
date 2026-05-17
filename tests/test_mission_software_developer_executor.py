@@ -174,6 +174,52 @@ class SoftwareDeveloperRoleExecutorTests(unittest.TestCase):
         self.assertTrue(result.artifact_content)
         self.assertIn("- None", result.artifact_content or "")
 
+    def test_allows_no_change_completion_when_summary_clearly_states_no_dead_code_found(self) -> None:
+        (self.root / "tests" / "test_ok.py").write_text(
+            "import unittest\n\n"
+            "class Smoke(unittest.TestCase):\n"
+            "    def test_ok(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="utf-8",
+        )
+        client = FakeClient(
+            [
+                tool_output(
+                    {
+                        "tool": "_role_task_result",
+                        "method": "submit",
+                        "arguments": {
+                            "status": "completed",
+                            "summary": (
+                                "Completed dead-code audit; no dead code instances were found, "
+                                "so no removal was performed."
+                            ),
+                        },
+                    },
+                ),
+            ]
+        )
+        agent = BaseAgent.new(client=client, rate_limiter=None)
+        executor = SoftwareDeveloperRoleExecutor(
+            agent,
+            config=SoftwareDeveloperRoleExecutorConfig(
+                workspace_root=self.root,
+                diagnostics_profiles=("unittest",),
+                diagnostics_timeout_seconds=60,
+                require_changed_files=True,
+            ),
+        )
+        request = RoleTaskRequest(
+            objective="Audit dead code and remove only if proven dead.",
+            mission_id="m_sd",
+            phase="implementation",
+            context={"board_task": {"task_type": "implementation"}},
+        )
+
+        result = executor.execute_task(request)
+
+        self.assertEqual(result.status, "completed")
+
     def test_blocks_when_changes_outside_allowed_prefixes(self) -> None:
         (self.root / "tests" / "test_ok.py").write_text(
             "import unittest\n\n"
