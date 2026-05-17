@@ -238,12 +238,26 @@ class MissionRuntime:
                 )
                 processed.append({"event_id": event_id, "ok": False, "error": str(exc)})
             finally:
-                self._events["ack_event"](
-                    {
-                        "consumer_id": self.config.consumer_id,
-                        "sequence": sequence,
-                    }
-                )
+                try:
+                    self._events["ack_event"](
+                        {
+                            "consumer_id": self.config.consumer_id,
+                            "sequence": sequence,
+                        }
+                    )
+                except ValueError as exc:
+                    message = str(exc)
+                    if "Cannot move consumer offset backwards" not in message:
+                        raise
+                    log_json(
+                        self._logger,
+                        "mission_runtime.ack_event.skipped_backwards_offset",
+                        {
+                            "consumer_id": self.config.consumer_id,
+                            "sequence": sequence,
+                            "error": message,
+                        },
+                    )
         return {
             "processed": processed,
             "consumer_state": self._events["get_consumer_state"]({"consumer_id": self.config.consumer_id})[
@@ -953,7 +967,8 @@ class MissionRuntime:
                     }
                 )
             except Exception:
-                pass
+                # Exception intentionally ignored: fallback claim is non-fatal in runtime.
+                return
         task_context = self._board_task_context(task_id) or task
         task_title = str(task_context.get("title") or "Implementation task").strip()
         task_body = str(task_context.get("body") or "").strip()
