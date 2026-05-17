@@ -65,7 +65,7 @@ class AgentAsToolConfig:
     structured_result_retries: int = 2
     disable_reply_tool_for_structured_result: bool = True
     structured_result_max_tool_rounds: int | None = None
-    structured_result_max_output_tokens: int | None = 3072
+    structured_result_max_output_tokens: int | None = 1536
     structured_result_parallel_tool_calls: bool = False
     force_structured_submit_on_failure: bool = True
     forced_submit_max_tool_rounds: int = 1
@@ -107,7 +107,7 @@ class AgentAsToolBridge:
         disabled_tools = set()
         if self.config.disable_reply_tool_for_structured_result:
             disabled_tools.add(self.agent.config.reply.tool)
-        query_overrides = self._query_overrides()
+        query_overrides = self._query_overrides(request)
         try:
             raw_result, reply = self.agent.query_structured_tool_result(
                 prompt,
@@ -337,10 +337,16 @@ class AgentAsToolBridge:
             f"Task payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}"
         )
 
-    def _query_overrides(self) -> dict[str, Any]:
+    def _query_overrides(self, request: RoleTaskRequest) -> dict[str, Any]:
         overrides: dict[str, Any] = {}
-        if self.config.structured_result_max_output_tokens is not None:
-            overrides["max_output_tokens"] = int(self.config.structured_result_max_output_tokens)
+        max_output_tokens = self.config.structured_result_max_output_tokens
+        if self.config.role_name == "software_development_manager" and (request.phase or "") == "development_plan":
+            if max_output_tokens is None:
+                max_output_tokens = 3072
+            else:
+                max_output_tokens = max(3072, int(max_output_tokens))
+        if max_output_tokens is not None:
+            overrides["max_output_tokens"] = int(max_output_tokens)
         overrides["parallel_tool_calls"] = bool(self.config.structured_result_parallel_tool_calls)
         return overrides
 
