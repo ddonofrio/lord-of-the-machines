@@ -224,7 +224,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "docs/",
             "config/",
             "README.md",
-            "src/lord_of_the_machines/mission/",
+            "src/lord_of_the_machines/",
             "tests/",
         ],
     )
