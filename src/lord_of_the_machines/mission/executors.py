@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Any
 
 from lord_of_the_machines.agent_tools import (
@@ -19,6 +21,11 @@ from lord_of_the_machines.mission.agent_as_tool import AgentAsToolBridge, AgentA
 from lord_of_the_machines.mission.contracts import RoleTaskRequest, RoleTaskResult
 from lord_of_the_machines.mission.events import STATUS_BLOCKED, STATUS_COMPLETED, STATUS_NEEDS_FOLLOW_UP
 from lord_of_the_machines.runtime import log_timeline
+
+IMPLEMENTATION_TASKS_CODE_BLOCK_RE = re.compile(
+    r"```(?:json)?\s*(\[[\s\S]*?\])\s*```",
+    re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -134,6 +141,112 @@ class SoftwareDeveloperRoleExecutorConfig:
         "tests/",
     )
     require_changed_files: bool = False
+
+
+@dataclass(slots=True)
+class SoftwareDevelopmentManagerRoleExecutorConfig:
+    role_name: str = "software_development_manager"
+    implementation_task_metadata_key: str = "implementation_tasks"
+    minimum_implementation_tasks: int = 1
+
+
+class SoftwareDevelopmentManagerRoleExecutor:
+    def __init__(
+        self,
+        agent: BaseAgent,
+        *,
+        config: SoftwareDevelopmentManagerRoleExecutorConfig | None = None,
+    ) -> None:
+        self.config = config or SoftwareDevelopmentManagerRoleExecutorConfig()
+        self._base = BaseAgentRoleExecutor(
+            agent,
+            config=BaseAgentRoleExecutorConfig(
+                role_name=self.config.role_name,
+                tool_name=f"{self.config.role_name}_agent",
+            ),
+        )
+
+    def execute_task(self, request: RoleTaskRequest) -> RoleTaskResult:
+        result = self._base.execute_task(request)
+        if request.phase != "development_plan":
+            return result
+        if result.status != STATUS_COMPLETED:
+            return result
+
+        metadata = dict(result.metadata) if isinstance(result.metadata, dict) else {}
+        raw_tasks = metadata.get(self.config.implementation_task_metadata_key)
+        normalized_tasks = self._normalize_tasks(raw_tasks)
+        if not normalized_tasks:
+            normalized_tasks = self._extract_tasks_from_artifact_content(result.artifact_content or "")
+
+        if len(normalized_tasks) < self.config.minimum_implementation_tasks:
+            return RoleTaskResult(
+                status=STATUS_NEEDS_FOLLOW_UP,
+                summary=(
+                    "Development plan is missing structured implementation task metadata. "
+                    "Provide metadata.implementation_tasks so runtime can schedule ticket-driven implementation."
+                ),
+                required_changes=[
+                    "Return metadata.implementation_tasks as a non-empty list of structured tasks.",
+                    "Each task must include key, title, description, priority, task_type, and depends_on.",
+                ],
+                follow_ups=[
+                    "Regenerate the development plan with explicit structured metadata for the implementation queue."
+                ],
+                metadata={"original_result": result.to_mapping()},
+            )
+
+        metadata[self.config.implementation_task_metadata_key] = normalized_tasks
+        result.metadata = metadata
+        return result
+
+    def _extract_tasks_from_artifact_content(self, content: str) -> list[dict[str, Any]]:
+        if not content.strip():
+            return []
+        for match in IMPLEMENTATION_TASKS_CODE_BLOCK_RE.finditer(content):
+            block = match.group(1).strip()
+            try:
+                parsed = json.loads(block)
+            except json.JSONDecodeError:
+                continue
+            normalized = self._normalize_tasks(parsed)
+            if normalized:
+                return normalized
+        return []
+
+    def _normalize_tasks(self, raw_tasks: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_tasks, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for index, raw_item in enumerate(raw_tasks):
+            if not isinstance(raw_item, dict):
+                continue
+            title = str(raw_item.get("title") or "").strip()
+            if not title:
+                continue
+            key = str(raw_item.get("key") or raw_item.get("task_key") or f"TASK-{index + 1}").strip()
+            description = str(raw_item.get("description") or raw_item.get("details") or title).strip()
+            priority = str(raw_item.get("priority") or "P2").strip().upper()
+            if priority not in {"P0", "P1", "P2", "P3"}:
+                priority = "P2"
+            task_type = str(raw_item.get("task_type") or "implementation").strip().lower()
+            if task_type not in {"implementation", "research", "qa", "ops", "documentation"}:
+                task_type = "implementation"
+            raw_depends_on = raw_item.get("depends_on")
+            depends_on: list[str] = []
+            if isinstance(raw_depends_on, list):
+                depends_on = [str(item).strip() for item in raw_depends_on if str(item).strip()]
+            normalized.append(
+                {
+                    "key": key,
+                    "title": title,
+                    "description": description,
+                    "priority": priority,
+                    "task_type": task_type,
+                    "depends_on": depends_on,
+                }
+            )
+        return normalized
 
 
 class SoftwareDeveloperRoleExecutor:

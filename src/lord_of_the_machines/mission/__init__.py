@@ -13,6 +13,8 @@ from lord_of_the_machines.mission.contracts import (
 from lord_of_the_machines.mission.executors import (
     BaseAgentRoleExecutor,
     BaseAgentRoleExecutorConfig,
+    SoftwareDevelopmentManagerRoleExecutor,
+    SoftwareDevelopmentManagerRoleExecutorConfig,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
     install_read_only_software_workspace_tool,
@@ -53,6 +55,8 @@ __all__ = [
     "MeetingResult",
     "BaseAgentRoleExecutor",
     "BaseAgentRoleExecutorConfig",
+    "SoftwareDevelopmentManagerRoleExecutor",
+    "SoftwareDevelopmentManagerRoleExecutorConfig",
     "SoftwareDeveloperRoleExecutor",
     "SoftwareDeveloperRoleExecutorConfig",
     "install_read_only_software_workspace_tool",

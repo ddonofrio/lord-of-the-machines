@@ -25,6 +25,8 @@ from lord_of_the_machines.mission import (
     MeetingToolAgent,
     RoleAgentFactory,
     RoleAgentFactoryConfig,
+    SoftwareDevelopmentManagerRoleExecutor,
+    SoftwareDevelopmentManagerRoleExecutorConfig,
     SoftwareDeveloperRoleExecutor,
     SoftwareDeveloperRoleExecutorConfig,
     install_read_only_software_workspace_tool,
@@ -150,9 +152,9 @@ def build_default_runner(
         software_architect_agent,
         config=BaseAgentRoleExecutorConfig(role_name="software_architect"),
     )
-    software_development_manager_executor = BaseAgentRoleExecutor(
+    software_development_manager_executor = SoftwareDevelopmentManagerRoleExecutor(
         software_development_manager_agent,
-        config=BaseAgentRoleExecutorConfig(role_name="software_development_manager"),
+        config=SoftwareDevelopmentManagerRoleExecutorConfig(),
     )
     software_developer_executor = SoftwareDeveloperRoleExecutor(
         software_developer_agent,
@@ -161,6 +163,7 @@ def build_default_runner(
             diagnostics_profiles=diagnostics_profiles,
             diagnostics_timeout_seconds=diagnostics_timeout_seconds,
             allowed_write_prefixes=allowed_write_prefixes,
+            require_changed_files=True,
         ),
     )
     qa_agent_executor = BaseAgentRoleExecutor(
