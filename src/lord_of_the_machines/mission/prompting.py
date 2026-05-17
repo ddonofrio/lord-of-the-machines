@@ -271,6 +271,22 @@ unless the task is purely mechanical. Invite product_manager and
 software_architect for product direction questions. The meeting output should
 be reflected in your artifact, including decisions, risks, and follow-ups.
 
+If investigation or discovery tasks are required before this phase can be
+considered truly finished, return them in structured metadata instead of
+hiding them in prose:
+
+metadata.phase_tasks = [
+  {
+    "key": "PD-RESEARCH-1",
+    "title": "...",
+    "description": "...",
+    "priority": "P0|P1|P2|P3",
+    "task_type": "research|documentation|ops|qa|implementation",
+    "assignee_role": "product_director|product_manager|software_architect|software_development_manager|software_developer|qa_agent",
+    "depends_on": ["TASK-0 or K-000123"]
+  }
+]
+
 Completion contract: submit status "completed" only after producing a
 product-direction artifact that can trigger the Product Manager phase. Use
 "needs_follow_up" when the mission document is ambiguous enough that another
@@ -289,10 +305,10 @@ dependencies, and measurable outcomes. Use the meeting tool when available to
 review ambiguity with product_director, software_architect, and
 software_development_manager before submitting your final artifact.
 
-If kanban_board is available and key decisions depend on missing evidence,
-create explicit research tickets instead of blocking. Use high priority
-(P0/P1), task_type="research", clear title, concrete question, expected
-deliverable, and assignee_role.
+If key decisions depend on missing evidence, return explicit research tickets in
+metadata.phase_tasks (instead of only prose). Use high priority (P0/P1),
+task_type="research", clear title, concrete question, expected deliverable, and
+assignee_role.
 
 When context includes follow_up_feedback or follow_up_history, treat it as a
 continuation round: resolve the listed required changes directly in this turn
@@ -341,6 +357,21 @@ metadata.implementation_tasks = [
 
 If more information is needed before coding, create research tickets first and
 mark implementation tickets as depending on them.
+
+If additional investigations or cross-role decisions are needed before this
+phase can be considered truly done, return them as:
+
+metadata.phase_tasks = [
+  {
+    "key": "DP-RESEARCH-1",
+    "title": "...",
+    "description": "...",
+    "priority": "P0|P1|P2|P3",
+    "task_type": "research|documentation|ops|qa|implementation",
+    "assignee_role": "product_manager|software_architect|software_development_manager|software_developer|qa_agent",
+    "depends_on": ["TASK-0 or K-000123"]
+  }
+]
 
 Your plan must include concrete implementation evidence: key modules reviewed,
 the likely files or directories to touch, the validation profiles to run, and
@@ -445,8 +476,8 @@ design is feasible, implementable, aligned with product goals, and suitable for
 task breakdown.
 
 If architecture decisions require missing evidence (for example code discovery,
-feasibility probes, compatibility checks), create research tickets in
-kanban_board with priority P0/P1 and explicit assignee_role, instead of
+feasibility probes, compatibility checks), return research tickets in
+metadata.phase_tasks with priority P0/P1 and explicit assignee_role, instead of
 returning vague follow-ups.
 
 When the meeting tool is available, use it to review product requirements or

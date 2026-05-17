@@ -977,6 +977,258 @@ class MissionRuntimeTests(unittest.TestCase):
         mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_task_queue_run"})["mission"]
         self.assertEqual(mission["phase_status"]["implementation"], "in_progress")
 
+    def test_product_requirements_phase_tasks_queue_from_metadata(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_product_phase_queue",
+                "title": "Product Queue",
+                "description": "Queue product requirement research tasks before transition.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {"mission_id": "mission_product_phase_queue", "phase": "product_direction", "status": "completed", "notes": "ok"}
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_product_phase_queue",
+                "phase": "product_requirements",
+                "status": "requested",
+                "notes": "start",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {"mission_id": "mission_product_phase_queue", "status": "in_progress", "reason": "product requirements"}
+        )
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_product_phase_queue",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "product_requirements",
+                    "role": "product_manager",
+                    "objective": "Define product requirements",
+                    "round": 1,
+                },
+            }
+        )
+        executor = FakeRoleExecutor(
+            RoleTaskResult(
+                status="completed",
+                summary="Requirements drafted, research tasks queued.",
+                metadata={
+                    "phase_tasks": [
+                        {
+                            "key": "PM-RES-1",
+                            "title": "Validate edge-case assumptions",
+                            "description": "Research permission edge cases with runtime evidence.",
+                            "priority": "P0",
+                            "task_type": "research",
+                            "assignee_role": "product_manager",
+                        },
+                        {
+                            "key": "PM-RES-2",
+                            "title": "Confirm tracking events",
+                            "description": "Validate telemetry contract for key flows.",
+                            "priority": "P1",
+                            "task_type": "research",
+                            "assignee_role": "product_manager",
+                            "depends_on": ["PM-RES-1"],
+                        },
+                    ]
+                },
+            )
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_manager": executor},
+            kanban_board=self.kanban_board,
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        result = runtime.run_once()
+
+        outcome = result["processed"][0]["outcome"]
+        self.assertEqual(outcome["status"], "in_progress")
+        self.assertEqual(outcome["reason"], "phase_tasks_remaining")
+
+        listed = self.kanban_board.handlers()["list_tasks"](
+            {"column": "02-product-requirements", "mission_id": "mission_product_phase_queue", "include_body": False}
+        )["columns"][0]["tasks"]
+        self.assertEqual(len(listed), 2)
+        self.assertEqual(listed[0]["assignee_role"], "product_manager")
+
+        mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_product_phase_queue"})[
+            "mission"
+        ]
+        self.assertEqual(mission["phase_status"]["product_requirements"], "in_progress")
+
+        events = self.event_bus.handlers()["list_events"](
+            {"topics": ["mission.phase.requested"], "mission_id": "mission_product_phase_queue"}
+        )["events"]
+        follow_up_events = [
+            event
+            for event in events
+            if str((event.get("payload") or {}).get("phase") or "") == "product_requirements"
+            and str((event.get("payload") or {}).get("task_id") or "").startswith("K-")
+        ]
+        self.assertTrue(follow_up_events)
+
+    def test_product_requirements_task_completion_moves_ticket_and_queues_next(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_product_ticket_run",
+                "title": "Product Ticket Run",
+                "description": "Run product requirement tickets one by one.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {"mission_id": "mission_product_ticket_run", "phase": "product_direction", "status": "completed", "notes": "ok"}
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_product_ticket_run",
+                "phase": "product_requirements",
+                "status": "requested",
+                "notes": "queue running",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {"mission_id": "mission_product_ticket_run", "status": "in_progress", "reason": "product queue"}
+        )
+
+        first_task = self.kanban_board.handlers()["create_task"](
+            {
+                "column": "02-product-requirements",
+                "task_id": "K-000810",
+                "title": "Product ticket one",
+                "description": "first",
+                "status": "in_progress",
+                "owner": "product_manager",
+                "priority": "P1",
+                "assignee_role": "product_manager",
+                "metadata": {"mission_id": "mission_product_ticket_run", "phase": "product_requirements"},
+            }
+        )["task"]
+        second_task = self.kanban_board.handlers()["create_task"](
+            {
+                "column": "02-product-requirements",
+                "task_id": "K-000811",
+                "title": "Product ticket two",
+                "description": "second",
+                "status": "ready",
+                "priority": "P1",
+                "assignee_role": "product_manager",
+                "metadata": {"mission_id": "mission_product_ticket_run", "phase": "product_requirements"},
+            }
+        )["task"]
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_product_ticket_run",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "product_requirements",
+                    "role": "product_manager",
+                    "objective": "Execute first product ticket",
+                    "task_id": first_task["task_id"],
+                    "round": 1,
+                },
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_manager": FakeRoleExecutor(RoleTaskResult(status="completed", summary="Done one"))},
+            kanban_board=self.kanban_board,
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        result = runtime.run_once()
+
+        outcome = result["processed"][0]["outcome"]
+        self.assertEqual(outcome["status"], "in_progress")
+        self.assertEqual(outcome["reason"], "phase_tasks_remaining")
+
+        done_task = self.kanban_board.handlers()["get_task"]({"task_id": first_task["task_id"]})["task"]
+        queued_task = self.kanban_board.handlers()["get_task"]({"task_id": second_task["task_id"]})["task"]
+        self.assertEqual(done_task["column"], "90-done")
+        self.assertEqual(done_task["status"], "done")
+        self.assertEqual(queued_task["status"], "in_progress")
+
+    def test_product_requirements_last_ticket_completion_transitions_to_technical_design(self) -> None:
+        self.mission_registry.handlers()["create_mission"](
+            {
+                "mission_id": "mission_product_ticket_last",
+                "title": "Product Last Ticket",
+                "description": "Complete last product requirement ticket.",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {"mission_id": "mission_product_ticket_last", "phase": "product_direction", "status": "completed", "notes": "ok"}
+        )
+        self.mission_registry.handlers()["update_mission_phase"](
+            {
+                "mission_id": "mission_product_ticket_last",
+                "phase": "product_requirements",
+                "status": "requested",
+                "notes": "queue running",
+            }
+        )
+        self.mission_registry.handlers()["update_mission_status"](
+            {"mission_id": "mission_product_ticket_last", "status": "in_progress", "reason": "product queue"}
+        )
+
+        only_task = self.kanban_board.handlers()["create_task"](
+            {
+                "column": "02-product-requirements",
+                "task_id": "K-000820",
+                "title": "Only ticket",
+                "description": "single",
+                "status": "in_progress",
+                "owner": "product_manager",
+                "priority": "P1",
+                "assignee_role": "product_manager",
+                "metadata": {"mission_id": "mission_product_ticket_last", "phase": "product_requirements"},
+            }
+        )["task"]
+        self.event_bus.handlers()["publish_event"](
+            {
+                "topic": "mission.phase.requested",
+                "mission_id": "mission_product_ticket_last",
+                "producer_role": "mission_runtime",
+                "payload": {
+                    "phase": "product_requirements",
+                    "role": "product_manager",
+                    "objective": "Execute only product ticket",
+                    "task_id": only_task["task_id"],
+                    "round": 1,
+                },
+            }
+        )
+        runtime = MissionRuntime(
+            mission_registry=self.mission_registry,
+            event_bus=self.event_bus,
+            artifact_registry=self.artifact_registry,
+            role_executors={"product_manager": FakeRoleExecutor(RoleTaskResult(status="completed", summary="Done last"))},
+            kanban_board=self.kanban_board,
+            config=MissionRuntimeConfig(max_events_per_run=5),
+        )
+
+        result = runtime.run_once()
+
+        outcome = result["processed"][0]["outcome"]
+        self.assertEqual(outcome["status"], "completed")
+
+        mission = self.mission_registry.handlers()["get_mission"]({"mission_id": "mission_product_ticket_last"})[
+            "mission"
+        ]
+        self.assertEqual(mission["phase_status"]["product_requirements"], "completed")
+        self.assertEqual(mission["phase_status"]["technical_design"], "requested")
+
 
 if __name__ == "__main__":
     unittest.main()

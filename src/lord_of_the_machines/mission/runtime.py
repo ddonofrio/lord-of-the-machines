@@ -66,6 +66,14 @@ class MissionRuntimeConfig:
         }
     )
     auto_schedule_next_phase: bool = True
+    enable_phase_task_queue: bool = True
+    phase_task_metadata_key: str = "phase_tasks"
+    phase_task_queue_phases: tuple[str, ...] = (
+        "product_direction",
+        "product_requirements",
+        "technical_design",
+        "development_plan",
+    )
     enable_implementation_task_queue: bool = True
     implementation_task_metadata_key: str = "implementation_tasks"
     task_board_done_column: str = "90-done"
@@ -388,6 +396,22 @@ class MissionRuntime:
     ) -> dict[str, Any]:
         if result.status == STATUS_COMPLETED:
             if (
+                phase != "implementation"
+                and self.config.enable_phase_task_queue
+                and self._kanban is not None
+                and phase in self.config.phase_task_queue_phases
+            ):
+                queue_outcome = self._handle_completed_phase_task(
+                    mission_id=mission_id,
+                    phase=phase,
+                    role=role,
+                    objective=request.objective,
+                    request=request,
+                    result=result,
+                )
+                if queue_outcome is not None:
+                    return queue_outcome
+            if (
                 phase == "implementation"
                 and self.config.enable_implementation_task_queue
                 and self._kanban is not None
@@ -689,6 +713,360 @@ class MissionRuntime:
             },
         )
         return {"status": result.status, "summary": phase_summary}
+
+    def _handle_completed_phase_task(
+        self,
+        *,
+        mission_id: str,
+        phase: str,
+        role: str,
+        objective: str,
+        request: RoleTaskRequest,
+        result: RoleTaskResult,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        phase_column = self._phase_column(phase)
+        if not phase_column:
+            return None
+        done_column = self.config.task_board_done_column
+        done_status = self._task_board_done_statuses()[0]
+        task_id = str(request.task_id or "").strip()
+
+        if task_id:
+            try:
+                self._kanban["move_task"](
+                    {
+                        "task_id": task_id,
+                        "to_column": done_column,
+                        "actor": role,
+                        "status": done_status,
+                        "note": f"Completed by {role}. {self._trim_text(result.summary, 400)}",
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - defensive guard
+                log_json(
+                    self._logger,
+                    "mission_runtime.phase_task_queue.complete_move_failed",
+                    {
+                        "mission_id": mission_id,
+                        "phase": phase,
+                        "task_id": task_id,
+                        "error": str(exc),
+                    },
+                )
+        else:
+            queue_seed_outcome = self._seed_phase_queue_from_metadata(
+                mission_id=mission_id,
+                phase=phase,
+                role=role,
+                objective=objective,
+                completed_result=result,
+            )
+            if queue_seed_outcome is not None:
+                return queue_seed_outcome
+
+        pending_tasks = self._pending_phase_tasks(mission_id, phase)
+        if not pending_tasks:
+            return None
+
+        mission = self._mission["get_mission"]({"mission_id": mission_id})["mission"]
+        seeded_event = self._seed_next_phase_task_event(
+            mission_id=mission_id,
+            mission=mission,
+            phase=phase,
+            role=role,
+            objective=self._phase_objective(mission),
+            round_number=1,
+            claimed_by=role,
+        )
+        if seeded_event is not None:
+            next_task_id = str((seeded_event.get("payload") or {}).get("task_id") or "")
+            completed_prefix = f"Completed task {task_id}. " if task_id else ""
+            note = f"{completed_prefix}Queued next phase task {next_task_id or '(unknown)'}."
+            self._mission["update_mission_phase"](
+                {
+                    "mission_id": mission_id,
+                    "phase": phase,
+                    "status": "in_progress",
+                    "notes": self._trim_text(note, MAX_PHASE_NOTE_CHARS),
+                }
+            )
+            log_timeline(
+                actor=self.config.consumer_id,
+                action="phase task queued",
+                mission_id=mission_id,
+                phase=phase,
+                details={
+                    "completed_task_id": task_id or None,
+                    "next_task_id": next_task_id,
+                    "remaining_tasks": len(pending_tasks),
+                },
+            )
+            return {
+                "status": "in_progress",
+                "reason": "phase_tasks_remaining",
+                "completed_task_id": task_id or None,
+                "next_task_event": seeded_event,
+            }
+
+        blocked_note = (
+            f"Completed task {task_id}. Remaining phase tasks exist "
+            "but no claimable task is ready (likely dependency or status issue)."
+            if task_id
+            else "Remaining phase tasks exist but no claimable task is ready (likely dependency or status issue)."
+        )
+        self._mission["update_mission_phase"](
+            {
+                "mission_id": mission_id,
+                "phase": phase,
+                "status": "in_progress",
+                "notes": self._trim_text(blocked_note, MAX_PHASE_NOTE_CHARS),
+            }
+        )
+        self._mission["update_mission_status"](
+            {
+                "mission_id": mission_id,
+                "status": "incomplete",
+                "reason": f"Phase '{phase}' queue has pending tasks with no claimable candidate.",
+            }
+        )
+        return {
+            "status": "incomplete",
+            "reason": "phase_queue_blocked",
+            "completed_task_id": task_id or None,
+            "remaining_tasks": len(pending_tasks),
+        }
+
+    def _phase_column(self, phase: str) -> str | None:
+        column = str(self.config.task_board_phase_columns.get(phase) or "").strip()
+        if not column:
+            return None
+        if column in {self.config.task_board_done_column, self.config.task_board_blocked_column}:
+            return None
+        return column
+
+    def _pending_phase_tasks(self, mission_id: str, phase: str) -> list[dict[str, Any]]:
+        if self._kanban is None:
+            return []
+        phase_column = self._phase_column(phase)
+        if not phase_column:
+            return []
+        listed = self._kanban["list_tasks"](
+            {
+                "column": phase_column,
+                "include_body": False,
+                "mission_id": mission_id,
+            }
+        )
+        columns = list(listed.get("columns") or [])
+        if not columns:
+            return []
+        tasks = list(columns[0].get("tasks") or [])
+        done_statuses = set(self._task_board_done_statuses())
+        return [task for task in tasks if str(task.get("status") or "").strip().lower() not in done_statuses]
+
+    def _seed_next_phase_task_event(
+        self,
+        *,
+        mission_id: str,
+        mission: dict[str, Any],
+        phase: str,
+        role: str,
+        objective: str,
+        round_number: int,
+        claimed_by: str,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        phase_column = self._phase_column(phase)
+        if not phase_column:
+            return None
+
+        in_progress_listed = self._kanban["list_tasks"](
+            {
+                "column": phase_column,
+                "include_body": True,
+                "mission_id": mission_id,
+                "statuses": ["in_progress"],
+            }
+        )
+        in_progress_columns = list(in_progress_listed.get("columns") or [])
+        in_progress_tasks = list(in_progress_columns[0].get("tasks") or []) if in_progress_columns else []
+        in_progress_tasks.sort(
+            key=lambda item: (
+                self._priority_rank(str(item.get("priority") or "P2")),
+                str(item.get("created_at") or ""),
+                str(item.get("task_id") or ""),
+            )
+        )
+        task = in_progress_tasks[0] if in_progress_tasks else None
+        if task is None:
+            claimed = self._kanban["claim_next_task"](
+                {
+                    "column": phase_column,
+                    "agent_id": claimed_by,
+                    "agent_role": role,
+                    "statuses": ["ready"],
+                    "claimed_status": "in_progress",
+                    "respect_dependencies": True,
+                    "done_statuses": list(self._task_board_done_statuses()),
+                }
+            )
+            if not claimed.get("claimed"):
+                return None
+            task = claimed.get("task")
+        if not isinstance(task, dict):
+            return None
+
+        task_id = str(task.get("task_id") or "").strip()
+        if not task_id:
+            return None
+        task_title = str(task.get("title") or "Phase task").strip()
+        task_body = str(task.get("body") or "").strip()
+        task_objective = f"{objective}\n\nTask {task_id}: {task_title}"
+        if task_body:
+            task_objective = f"{task_objective}\n\nTask details:\n{task_body}"
+        context = self._seed_context_for_phase(mission, phase)
+        context["task_execution_mode"] = "kanban_ticket"
+        context["board_task"] = task
+
+        event_result = self._events["publish_event"](
+            {
+                "topic": TOPIC_PHASE_REQUESTED,
+                "mission_id": mission_id,
+                "producer_role": self.config.consumer_id,
+                "payload": {
+                    "phase": phase,
+                    "role": role,
+                    "objective": task_objective,
+                    "task_id": task_id,
+                    "context": context,
+                    "round": round_number,
+                },
+            }
+        )
+        return event_result["event"]
+
+    def _seed_phase_queue_from_metadata(
+        self,
+        *,
+        mission_id: str,
+        phase: str,
+        role: str,
+        objective: str,
+        completed_result: RoleTaskResult,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        phase_column = self._phase_column(phase)
+        if not phase_column:
+            return None
+        metadata = completed_result.metadata if isinstance(completed_result.metadata, dict) else {}
+        raw_tasks = metadata.get(self.config.phase_task_metadata_key)
+        if not isinstance(raw_tasks, list) or not raw_tasks:
+            return None
+
+        created_tasks: list[dict[str, Any]] = []
+        key_to_task_id: dict[str, str] = {}
+        dependency_keys: dict[str, list[str]] = {}
+        for index, raw_item in enumerate(raw_tasks):
+            if not isinstance(raw_item, dict):
+                continue
+            title = str(raw_item.get("title") or "").strip()
+            if not title:
+                continue
+            description = str(raw_item.get("description") or raw_item.get("details") or "").strip()
+            priority = str(raw_item.get("priority") or "P2").strip().upper()
+            if priority not in {"P0", "P1", "P2", "P3"}:
+                priority = "P2"
+            task_type = str(raw_item.get("task_type") or "research").strip().lower() or "research"
+            if task_type not in {"implementation", "research", "qa", "ops", "documentation"}:
+                task_type = "research"
+            task_key = str(raw_item.get("key") or raw_item.get("task_key") or f"TASK-{index + 1}").strip()
+            assignee_role = str(raw_item.get("assignee_role") or role).strip() or role
+            created = self._kanban["create_task"](
+                {
+                    "column": phase_column,
+                    "title": title,
+                    "description": description,
+                    "status": "ready",
+                    "priority": priority,
+                    "task_type": task_type,
+                    "assignee_role": assignee_role,
+                    "metadata": {
+                        "mission_id": mission_id,
+                        "phase": phase,
+                        "source_phase": phase,
+                        "task_key": task_key,
+                    },
+                }
+            )
+            task = created.get("task")
+            if isinstance(task, dict):
+                created_tasks.append(task)
+                created_task_id = str(task.get("task_id") or "").strip()
+                if created_task_id:
+                    key_to_task_id[task_key] = created_task_id
+                    raw_depends_on = raw_item.get("depends_on")
+                    if isinstance(raw_depends_on, list):
+                        dependency_keys[created_task_id] = [str(item).strip() for item in raw_depends_on if str(item).strip()]
+
+        for task_id, keys in dependency_keys.items():
+            resolved_dependencies: list[str] = []
+            for key in keys:
+                candidate = key.strip().upper()
+                mapped = key_to_task_id.get(key) or key_to_task_id.get(candidate)
+                if mapped:
+                    resolved_dependencies.append(mapped)
+                    continue
+                if TASK_ID_VALUE_RE.fullmatch(candidate):
+                    resolved_dependencies.append(candidate)
+                    continue
+            if resolved_dependencies:
+                self._kanban["update_task"](
+                    {
+                        "task_id": task_id,
+                        "depends_on": resolved_dependencies,
+                        "actor": self.config.consumer_id,
+                    }
+                )
+
+        if not created_tasks:
+            return None
+
+        self._mission["update_mission_phase"](
+            {
+                "mission_id": mission_id,
+                "phase": phase,
+                "status": "in_progress",
+                "notes": (
+                    f"Phase queue initialized with {len(created_tasks)} tasks "
+                    f"from '{self.config.phase_task_metadata_key}'."
+                ),
+            }
+        )
+        mission = self._mission["get_mission"]({"mission_id": mission_id})["mission"]
+        seeded_event = self._seed_next_phase_task_event(
+            mission_id=mission_id,
+            mission=mission,
+            phase=phase,
+            role=role,
+            objective=objective,
+            round_number=1,
+            claimed_by=role,
+        )
+        if seeded_event is None:
+            return {
+                "queued_tasks": len(created_tasks),
+                "seeded_task_event": None,
+            }
+        return {
+            "status": "in_progress",
+            "reason": "phase_tasks_remaining",
+            "queued_tasks": len(created_tasks),
+            "next_task_event": seeded_event,
+        }
 
     def _handle_completed_implementation_task(
         self,
