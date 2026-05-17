@@ -164,6 +164,19 @@ class MissionRuntime:
                     seeded.append(seeded_task_event)
                     self._seeded_phase_keys.add((mission_id, phase_to_seed))
                     continue
+                fallback_task_event = self._seed_fallback_implementation_task_event(
+                    mission_id=mission_id,
+                    mission=mission,
+                    phase=phase_to_seed,
+                    role=role,
+                    objective=objective,
+                    round_number=1,
+                    claimed_by=role,
+                )
+                if fallback_task_event is not None:
+                    seeded.append(fallback_task_event)
+                    self._seeded_phase_keys.add((mission_id, phase_to_seed))
+                    continue
             round_number = self._next_round_for_seed(mission_id, phase_to_seed)
             payload = {
                 "phase": phase_to_seed,
@@ -896,6 +909,81 @@ class MissionRuntime:
                     "round": round_number,
                 },
             }
+        )
+        return event_result["event"]
+
+    def _seed_fallback_implementation_task_event(
+        self,
+        *,
+        mission_id: str,
+        mission: dict[str, Any],
+        phase: str,
+        role: str,
+        objective: str,
+        round_number: int,
+        claimed_by: str,
+    ) -> dict[str, Any] | None:
+        if self._kanban is None:
+            return None
+        pending_tasks = self._pending_implementation_tasks(mission_id)
+        if not pending_tasks:
+            return None
+        pending_tasks.sort(
+            key=lambda item: (
+                self._priority_rank(str(item.get("priority") or "P2")),
+                str(item.get("created_at") or ""),
+                str(item.get("task_id") or ""),
+            )
+        )
+        task = pending_tasks[0]
+        task_id = str(task.get("task_id") or "").strip()
+        if not task_id:
+            return None
+
+        current_status = str(task.get("status") or "").strip().lower()
+        if current_status != "in_progress":
+            try:
+                self._kanban["update_task"](
+                    {
+                        "task_id": task_id,
+                        "status": "in_progress",
+                        "owner": claimed_by,
+                        "actor": claimed_by,
+                        "note": f"Claimed by runtime fallback for role {role}.",
+                    }
+                )
+            except Exception:
+                pass
+        task_context = self._board_task_context(task_id) or task
+        task_title = str(task_context.get("title") or "Implementation task").strip()
+        task_body = str(task_context.get("body") or "").strip()
+        task_objective = f"{objective}\n\nTask {task_id}: {task_title}"
+        if task_body:
+            task_objective = f"{task_objective}\n\nTask details:\n{task_body}"
+        context = self._seed_context_for_phase(mission, phase)
+        context["task_execution_mode"] = "kanban_ticket"
+        context["board_task"] = task_context
+        event_result = self._events["publish_event"](
+            {
+                "topic": TOPIC_PHASE_REQUESTED,
+                "mission_id": mission_id,
+                "producer_role": self.config.consumer_id,
+                "payload": {
+                    "phase": phase,
+                    "role": role,
+                    "objective": task_objective,
+                    "task_id": task_id,
+                    "context": context,
+                    "round": round_number,
+                },
+            }
+        )
+        log_timeline(
+            actor=self.config.consumer_id,
+            action="implementation task queued (fallback)",
+            mission_id=mission_id,
+            phase=phase,
+            details={"task_id": task_id, "role": role},
         )
         return event_result["event"]
 
