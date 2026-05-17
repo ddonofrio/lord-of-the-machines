@@ -161,6 +161,62 @@
           "Documentation explains usage and safety controls."
         ]
       }
+    },
+    {
+      "mission_id": "mvp_codebase_academic_modular_refactor",
+      "title": "Academic Codebase Modularization And Dead Code Cleanup",
+      "description": "Perform a full codebase analysis and refactor the project to be more academic, modular, and easier to understand, while removing dead code and simplifying unnecessary complexity.",
+      "metadata": {
+        "goal": "Raise overall code quality, readability, and maintainability by applying disciplined modular refactoring and dead-code elimination.",
+        "decision_defaults": {
+          "refactor_policy": "Prefer small cohesive modules with clear ownership boundaries and explicit interfaces over large mixed-responsibility files.",
+          "dead_code_policy": "Remove unreachable code, obsolete helpers, unused branches, and stale artifacts when they are safely confirmed as dead."
+        },
+        "workflow_constraints": [
+          "Implement real code changes; do not stop at planning.",
+          "Preserve external behavior unless a documented change is explicitly required.",
+          "Refactor incrementally with test evidence after each meaningful slice.",
+          "Avoid introducing new complexity while simplifying existing structures.",
+          "Document architectural rationale and refactor outcomes in a dedicated technical report."
+        ],
+        "deliverables": [
+          {
+            "type": "code",
+            "description": "Refactor oversized or mixed-responsibility modules into clearer modular units."
+          },
+          {
+            "type": "code",
+            "description": "Remove dead code paths, unused helpers, and stale logic that is no longer needed."
+          },
+          {
+            "type": "tests",
+            "description": "Update or add tests to keep behavior validated after refactors and removals."
+          },
+          {
+            "type": "documentation",
+            "path": "docs/codebase-academic-modular-refactor.md",
+            "description": "Explain what was changed, why, where modules were split, what dead code was removed, and how behavior was validated."
+          }
+        ],
+        "acceptance_checks": {
+          "documentation_file": "docs/codebase-academic-modular-refactor.md",
+          "required_files": [
+            "docs/codebase-academic-modular-refactor.md"
+          ],
+          "required_role_mentions": [
+            "software_architect",
+            "software_development_manager",
+            "software_developer",
+            "qa_agent"
+          ]
+        },
+        "acceptance_criteria": [
+          "Codebase structure is measurably more modular and easier to navigate.",
+          "Confirmed dead code is removed without regressions.",
+          "Refactored areas are validated by updated tests or diagnostics evidence.",
+          "Refactor report documents changes, rationale, and validation outcomes."
+        ]
+      }
     }
   ]
 }
