@@ -872,6 +872,10 @@ class MissionRuntimeTests(unittest.TestCase):
             {"column": "05-implementation", "mission_id": "mission_task_queue_seed", "include_body": False}
         )["columns"][0]["tasks"]
         self.assertEqual(len(listed), 2)
+        task_by_title = {str(item.get("title")): item for item in listed}
+        task_one = task_by_title["Implement command policy flag"]
+        task_two = task_by_title["Write tests"]
+        self.assertEqual(task_two["depends_on"], [task_one["task_id"]])
         events = self.event_bus.handlers()["list_events"](
             {"topics": ["mission.phase.requested"], "mission_id": "mission_task_queue_seed"}
         )["events"]

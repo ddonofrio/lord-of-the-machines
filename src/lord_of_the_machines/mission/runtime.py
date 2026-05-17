@@ -1229,12 +1229,13 @@ class MissionRuntime:
             resolved_dependencies: list[str] = []
             for key in keys:
                 candidate = key.strip().upper()
+                mapped = key_to_task_id.get(key) or key_to_task_id.get(candidate)
+                if mapped:
+                    resolved_dependencies.append(mapped)
+                    continue
                 if TASK_ID_VALUE_RE.fullmatch(candidate):
                     resolved_dependencies.append(candidate)
                     continue
-                mapped = key_to_task_id.get(key)
-                if mapped:
-                    resolved_dependencies.append(mapped)
             if resolved_dependencies:
                 self._kanban["update_task"](
                     {
